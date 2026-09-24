@@ -23,7 +23,7 @@ class ResourceValidator:
                 zones_involved=exceeded_zones,
                 demanded=total_veh,
                 available=resources.vehicles,
-                resolution=f"Cap total vehicle distribution to {resources.vehicles} units, prioritizing evacuation zones."
+                resolution=f"Cap total vehicle distribution to {resources.vehicles} units, prioritizing high severity and evacuation sectors."
             ))
 
         if total_med > resources.medics:
@@ -35,7 +35,7 @@ class ResourceValidator:
                 zones_involved=exceeded_zones,
                 demanded=total_med,
                 available=resources.medics,
-                resolution=f"Rebalance {resources.medics} medics to highest critical-patient zones."
+                resolution=f"Rebalance {resources.medics} medics to highest critical-patient & high severity sectors."
             ))
 
         if total_she > resources.shelters:
@@ -72,18 +72,16 @@ class ResourceValidator:
     ) -> List[ZoneAllocation]:
         """Strictly adjusts allocations to guarantee hard limits are never breached."""
         zone_map = {z.id: z for z in zones}
-        
-        # Calculate priorities for each zone
-        weighted_zones = []
         alloc_dict = {a.zone_id: a for a in raw_allocations}
+        weighted_zones = []
 
         for z in zones:
-            # Score for medics: heavy weight on critical & injured
-            med_score = z.critical * 4.0 + z.injured * 1.5 + (10.0 if z.risk == "Critical" else 3.0)
-            # Score for vehicles: heavy weight on evacuation & critical
-            veh_score = (30.0 if z.evacuation_required else 5.0) + z.critical * 2.5 + z.population * 0.1
-            # Score for shelters: heavy weight on evacuation & population
-            shelter_score = (50.0 if z.evacuation_required else 10.0) + z.population * 0.2
+            # Score for medics: heavy weight on critical patients, severity score, & injured
+            med_score = (z.critical * 5.0) + (z.severity_score * 0.3) + (z.injured * 1.0)
+            # Score for vehicles: heavy weight on evacuation, flood level, severity score
+            veh_score = (35.0 if z.evacuation_required else 5.0) + (z.flood_level_m * 4.0) + (z.critical * 2.0) + (z.severity_score * 0.2)
+            # Score for shelters: heavy weight on evacuation & severity score
+            shelter_score = (50.0 if z.evacuation_required else 10.0) + (z.severity_score * 0.3)
             
             weighted_zones.append({
                 "zone": z,
@@ -95,18 +93,18 @@ class ResourceValidator:
 
         # Distribute Medics (max resources.medics)
         sorted_by_med = sorted(weighted_zones, key=lambda x: x["med_score"], reverse=True)
-        medics_remaining = resources.medics
+        medics_remaining = max(0, resources.medics)
         medic_alloc = {z.id: 0 for z in zones}
         
-        # First pass: give at least 1 medic to any zone with critical patients
+        # First pass: give at least 1 medic to any zone with critical patients or high severity
         for item in sorted_by_med:
             z = item["zone"]
-            if z.critical > 0 and medics_remaining > 0:
+            if (z.critical > 0 or z.severity_score >= 60) and medics_remaining > 0:
                 medic_alloc[z.id] += 1
                 medics_remaining -= 1
         
-        # Second pass: distribute remaining according to score proportion
-        while medics_remaining > 0:
+        # Second pass: distribute remaining according to score ranking
+        while medics_remaining > 0 and sorted_by_med:
             for item in sorted_by_med:
                 if medics_remaining == 0:
                     break
@@ -116,16 +114,16 @@ class ResourceValidator:
 
         # Distribute Vehicles (max resources.vehicles)
         sorted_by_veh = sorted(weighted_zones, key=lambda x: x["veh_score"], reverse=True)
-        vehicles_remaining = resources.vehicles
+        vehicles_remaining = max(0, resources.vehicles)
         veh_alloc = {z.id: 0 for z in zones}
 
-        # Evacuation zones get primary vehicle priority
+        # Evacuation & high flood zones get primary vehicle priority
         for item in sorted_by_veh:
             z = item["zone"]
-            if z.evacuation_required and vehicles_remaining >= 2:
+            if (z.evacuation_required or z.flood_level_m >= 3.0) and vehicles_remaining >= 2:
                 veh_alloc[z.id] += 2
                 vehicles_remaining -= 2
-            elif z.evacuation_required and vehicles_remaining == 1:
+            elif (z.evacuation_required or z.flood_level_m >= 2.0) and vehicles_remaining >= 1:
                 veh_alloc[z.id] += 1
                 vehicles_remaining -= 1
 
@@ -139,7 +137,7 @@ class ResourceValidator:
 
         # Distribute Shelters (max resources.shelters)
         sorted_by_shelter = sorted(weighted_zones, key=lambda x: x["shelter_score"], reverse=True)
-        shelter_remaining = resources.shelters
+        shelter_remaining = max(0, resources.shelters)
         shelter_alloc = {z.id: 0 for z in zones}
 
         for item in sorted_by_shelter:
@@ -150,13 +148,12 @@ class ResourceValidator:
             shelter_remaining -= 1
 
         # Distribute Supplies (max resources.supplies)
-        total_pop = sum(z.population for z in zones) or 1
-        supplies_remaining = resources.supplies
+        total_weight = sum(z.severity_score + z.population for z in zones) or 1.0
+        supplies_remaining = max(0, resources.supplies)
         supply_alloc = {}
         for z in zones:
-            prop = z.population / total_pop
-            if z.risk == "Critical":
-                prop *= 1.3
+            weight = (z.severity_score * 1.5) + z.population
+            prop = weight / total_weight
             allocated = int(round(prop * resources.supplies))
             supply_alloc[z.id] = allocated
         
@@ -170,18 +167,17 @@ class ResourceValidator:
         validated_allocations = []
         for z in zones:
             orig = alloc_dict.get(z.id)
-            priority = z.risk
+            priority = z.risk_level or z.risk
             
-            # Determine reason
             reasons = []
             if medic_alloc[z.id] > 0:
-                reasons.append(f"Allocated {medic_alloc[z.id]} medics for {z.critical} critical patients")
+                reasons.append(f"{medic_alloc[z.id]} medics for {z.critical} critical patients (severity {z.severity_score}/100)")
             if veh_alloc[z.id] > 0:
-                reasons.append(f"{veh_alloc[z.id]} vehicles assigned for transport/evac")
+                reasons.append(f"{veh_alloc[z.id]} rescue vehicles for evac ({z.flood_level_m}m flood)")
             if shelter_alloc[z.id] > 0:
                 reasons.append(f"{shelter_alloc[z.id]} shelter units assigned")
             
-            reason_str = "; ".join(reasons) if reasons else "Base monitoring allocation"
+            reason_str = "; ".join(reasons) if reasons else "Monitoring sector"
 
             validated_allocations.append(ZoneAllocation(
                 zone_id=z.id,
@@ -191,6 +187,7 @@ class ResourceValidator:
                 shelter_units=shelter_alloc[z.id],
                 supplies=supply_alloc[z.id],
                 priority=priority,
+                severity_score=z.severity_score,
                 reason=reason_str
             ))
 
