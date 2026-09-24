@@ -1,5 +1,5 @@
 import React from 'react';
-import { Table, Truck, Stethoscope, Home, Package, AlertCircle, ArrowUpRight, ArrowDownRight, Layers } from 'lucide-react';
+import { Table, Truck, Stethoscope, Home, Package, ShieldAlert, Layers } from 'lucide-react';
 
 export default function ResponsePlan({ plan }) {
   if (!plan || !plan.final_allocations) {
@@ -66,6 +66,7 @@ export default function ResponsePlan({ plan }) {
           <thead>
             <tr className="border-b border-slate-800 bg-slate-950/80 text-slate-400 uppercase tracking-wider">
               <th className="py-3 px-4">Zone</th>
+              <th className="py-3 px-4">Severity Score</th>
               <th className="py-3 px-4">Priority</th>
               <th className="py-3 px-4 text-center">
                 <span className="flex items-center justify-center gap-1">
@@ -97,27 +98,45 @@ export default function ResponsePlan({ plan }) {
                 <tr
                   key={alloc.zone_id}
                   className={`hover:bg-slate-800/40 transition-colors ${
-                    isCrit ? 'bg-red-950/10' : ''
+                    isCrit ? 'bg-rose-950/10' : ''
                   }`}
                 >
-                  <td className="py-3 px-4 font-bold text-white">{alloc.zone_name}</td>
-                  <td className="py-3 px-4">
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border uppercase ${
-                      isCrit
-                        ? 'bg-red-500/20 text-red-300 border-red-500/40'
-                        : alloc.priority === 'High'
-                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                        : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                    }`}>
+                  <td className="py-3.5 px-4 font-bold text-white">
+                    {alloc.zone_name}
+                  </td>
+                  <td className="py-3.5 px-4 font-bold text-purple-300">
+                    <div className="flex items-center gap-1">
+                      <ShieldAlert className="w-3.5 h-3.5 text-purple-400" />
+                      <span>{alloc.severity_score || 0}/100</span>
+                    </div>
+                  </td>
+                  <td className="py-3.5 px-4">
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+                        isCrit
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                          : alloc.priority === 'Very High' || alloc.priority === 'High'
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                          : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      }`}
+                    >
                       {alloc.priority}
                     </span>
                   </td>
-                  <td className="py-3 px-4 text-center font-bold text-cyan-300 text-sm">{alloc.vehicles}</td>
-                  <td className="py-3 px-4 text-center font-bold text-rose-300 text-sm">{alloc.medics}</td>
-                  <td className="py-3 px-4 text-center font-bold text-emerald-300 text-sm">{alloc.shelter_units}</td>
-                  <td className="py-3 px-4 text-center font-bold text-amber-300 text-sm">{alloc.supplies}</td>
-                  <td className="py-3 px-4 text-slate-300 text-[11px] max-w-xs truncate">
-                    {alloc.reason || 'Optimal resource allocation.'}
+                  <td className="py-3.5 px-4 text-center font-bold text-cyan-300 text-sm">
+                    {alloc.vehicles}
+                  </td>
+                  <td className="py-3.5 px-4 text-center font-bold text-rose-300 text-sm">
+                    {alloc.medics}
+                  </td>
+                  <td className="py-3.5 px-4 text-center font-bold text-emerald-300 text-sm">
+                    {alloc.shelter_units}
+                  </td>
+                  <td className="py-3.5 px-4 text-center text-amber-300">
+                    {alloc.supplies}
+                  </td>
+                  <td className="py-3.5 px-4 text-slate-300 font-sans text-xs max-w-xs">
+                    {alloc.reason || 'Allocated by Coordinator Agent'}
                   </td>
                 </tr>
               );

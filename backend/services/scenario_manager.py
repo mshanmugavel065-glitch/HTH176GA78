@@ -6,16 +6,18 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from models import (
     DisasterZone, ResourcePool, SystemState, 
-    ActivityLog, AgentRecommendation, CoordinatorPlan, ChatMessage, PublicAlert
+    ActivityLog, AgentRecommendation, CoordinatorPlan, ChatMessage, PublicAlert,
+    DatasetMetadata, DisasterIntelligenceResult, PlanDifference
 )
 from agents.location_agent import LocationAgent
 from agents.situation_agent import SituationAgent
+from agents.disaster_intelligence_agent import DisasterIntelligenceAgent
 from agents.medical_agent import MedicalAgent
 from agents.logistics_agent import LogisticsAgent
-from agents.risk_agent import RiskAgent
 from agents.communication_agent import CommunicationAgent
 from agents.coordinator_agent import CoordinatorAgent
 from services.llm_service import llm_service
+from services.dataset_service import dataset_service
 
 KNOWN_CITIES = [
     "coimbatore", "chennai", "mumbai", "bengaluru", "kochi", "hyderabad", 
@@ -32,17 +34,25 @@ class ScenarioManager:
     def __init__(self):
         self.location_agent = LocationAgent()
         self.situation_agent = SituationAgent()
+        self.intelligence_agent = DisasterIntelligenceAgent()
         self.medical_agent = MedicalAgent()
         self.logistics_agent = LogisticsAgent()
-        self.risk_agent = RiskAgent()
         self.communication_agent = CommunicationAgent()
         self.coordinator_agent = CoordinatorAgent()
 
         self.location = ""
+        self.disaster_type = "Flood"
         self.situation_query = ""
+        self.data_source_mode = "SIMULATED DISASTER SCENARIO"
+        self.dataset_metadata: Optional[DatasetMetadata] = None
+        self.intelligence_result: Optional[DisasterIntelligenceResult] = None
+
         self.resources = ResourcePool(vehicles=5, medics=10, shelters=3, supplies=100)
         self.zones: List[DisasterZone] = []
         self.current_plan: Optional[CoordinatorPlan] = None
+        self.previous_plan: Optional[CoordinatorPlan] = None
+        self.plan_differences: List[PlanDifference] = []
+        
         self.activity_logs: List[ActivityLog] = []
         self.agent_recommendations: Dict[str, AgentRecommendation] = {}
         self.chat_history: List[ChatMessage] = []
@@ -67,26 +77,96 @@ class ScenarioManager:
         except Exception:
             self.resources = ResourcePool(vehicles=5, medics=10, shelters=3, supplies=100)
             self.zones = [
-                DisasterZone(id="zone-a", name="Zone A", population=80, injured=12, critical=4, risk="High", evacuation_required=False, road_name="Road 1 -> Hospital", road_status="Open", alternate_route="Direct Highway 1", description="Residential district with partial grid outage."),
-                DisasterZone(id="zone-b", name="Zone B", population=40, injured=25, critical=10, risk="Critical", evacuation_required=True, road_name="Road 2 -> Shelter", road_status="Congested", alternate_route="River Bypass Road", description="Industrial river sector with chemical hazard."),
-                DisasterZone(id="zone-c", name="Zone C", population=100, injured=8, critical=2, risk="High", evacuation_required=True, road_name="Road 3 -> Shelter", road_status="Blocked", alternate_route="Road 4 (North Ridge Bypass)", description="Flash flood evacuation sector. Primary Road 3 is BLOCKED.")
+                DisasterZone(id="zone-a", name="Zone A", population=80, injured=12, critical=4, risk="High", rainfall_mm=140, flood_level_m=1.8, affected_area_km2=10.5, road_access=0.85, severity_score=58.0, risk_level="High", evacuation_required=False, road_name="Road 1 -> Hospital", road_status="Open", alternate_route="Direct Highway 1", description="Residential sector with minor grid disruption."),
+                DisasterZone(id="zone-b", name="Zone B", population=40, injured=25, critical=10, risk="Critical", rainfall_mm=240, flood_level_m=3.8, affected_area_km2=25.0, road_access=0.30, severity_score=84.0, risk_level="Critical", evacuation_required=True, road_name="Road 2 -> Shelter", road_status="Congested", alternate_route="River Bypass Road", description="Industrial river sector with chemical hazard."),
+                DisasterZone(id="zone-c", name="Zone C", population=100, injured=8, critical=2, risk="High", rainfall_mm=180, flood_level_m=2.4, affected_area_km2=15.0, road_access=0.20, severity_score=72.0, risk_level="Very High", evacuation_required=True, road_name="Road 3 -> Shelter", road_status="Blocked", alternate_route="Road 4 (North Ridge Bypass)", description="Low-lying coastal sector flooded. Primary Road 3 is BLOCKED.")
             ]
 
         self.activity_logs = []
         self.agent_recommendations = {}
         self.current_plan = None
+        self.previous_plan = None
+        self.plan_differences = []
         self.is_pending_replan = False
         self.last_referenced_zone_id = "zone-b"
+        self.data_source_mode = "SIMULATED DISASTER SCENARIO"
+        self.dataset_metadata = DatasetMetadata(
+            filename="Simulated Hazard Data",
+            data_type="SIMULATED DISASTER SCENARIO",
+            columns_detected=["location", "rainfall_mm", "flood_level_m", "affected_area_km2", "injured", "critical_patients", "road_access"],
+            row_count=len(self.zones),
+            warnings=[]
+        )
 
     def reset_scenario_for_new_location(self, new_location: str, disaster_type: Optional[str] = None):
         """Reset scenario state for a new city location to prevent cross-location data leakage."""
         self.location = new_location
         if disaster_type:
+            self.disaster_type = disaster_type.title() if "flood" not in disaster_type.lower() else "Flood"
             self.situation_query = f"{disaster_type} affecting multiple sectors"
 
         self.load_initial_data()
         self.is_analyzed = True
         self._add_activity("system", "Location Scenario Initialized", f"Active response scenario set to {self.location} ({self.situation_query}).", "info")
+
+    def upload_dataset(self, file_bytes: bytes, filename: str) -> SystemState:
+        meta, parsed_zones = dataset_service.process_file_content(file_bytes, filename)
+        self.dataset_metadata = meta
+        self.data_source_mode = "UPLOADED DATASET"
+        self.zones = parsed_zones
+        self.is_analyzed = True
+
+        self._add_activity("dataset", "Dataset Uploaded & Parsed", f"Loaded '{filename}' with {len(parsed_zones)} zones ({len(meta.columns_detected)} indicators detected).", "success")
+
+        # Run pipeline with new dataset
+        self.run_full_pipeline(is_replan=False)
+
+        asst_msg = ChatMessage(
+            id=str(uuid.uuid4())[:8],
+            sender="assistant",
+            content=f"📁 **DATASET LOADED**: '{filename}' ({len(parsed_zones)} disaster sectors parsed).\n\n"
+                    f"- **Indicators Detected**: {', '.join(meta.columns_detected[:6])}\n"
+                    f"- **Highest Severity Sector**: {self.intelligence_result.priority_zone_name if self.intelligence_result else 'Zone B'} "
+                    f"(Score: {self.intelligence_result.overall_severity_score if self.intelligence_result else 84}/100).\n"
+                    f"{'⚠️ *' + meta.warnings[0] + '*' if meta.warnings else ''}",
+            timestamp=datetime.now().strftime("%H:%M:%S"),
+            agent_name="Disaster Intelligence Agent",
+            suggested_actions=["CREATE RESPONSE PLAN", "WHICH ZONE IS HIGHEST RISK?", "GENERATE PUBLIC ALERT"]
+        )
+        self.chat_history.append(asst_msg)
+
+        return self.get_state()
+
+    def simulate_hazard_update(self, rainfall_increase: float = 50.0, flood_increase: float = 0.5) -> SystemState:
+        """Simulate dynamic environmental hazard changes (e.g. rainfall surge)."""
+        for zone in self.zones:
+            zone.rainfall_mm += rainfall_increase
+            zone.flood_level_m = round(zone.flood_level_m + flood_increase, 2)
+            if zone.flood_level_m >= 3.0:
+                zone.evacuation_required = True
+
+        self._add_activity("system", "🌧️ HAZARD TELEMETRY UPDATE", f"Rainfall increased by +{rainfall_increase}mm across all sectors. Flood levels elevated.", "warning")
+        self.is_pending_replan = True
+
+        # Re-run disaster intelligence analysis
+        intel_res, intel_rec = self.intelligence_agent.analyze_disaster(self.zones, self.location or "Active Scenario", self.disaster_type)
+        self.intelligence_result = intel_res
+        self.agent_recommendations["disaster_intelligence_agent"] = intel_rec
+
+        asst_msg = ChatMessage(
+            id=str(uuid.uuid4())[:8],
+            sender="assistant",
+            content=f"🌧️ **ENVIRONMENTAL HAZARD UPDATE ({self.location or 'SCENARIO'})**\n\n"
+                    f"Rainfall increased by **+{rainfall_increase}mm**. Peak flood level reached **{intel_res.max_flood_level_m}m**.\n"
+                    f"Overall Prototype Severity Score increased to **{intel_res.overall_severity_score}/100 ({intel_res.overall_risk_level})**.\n\n"
+                    f"Click **[ 🔄 RE-PLAN RESPONSE ]** to trigger multi-agent re-allocation.",
+            timestamp=datetime.now().strftime("%H:%M:%S"),
+            agent_name="Disaster Intelligence Agent",
+            suggested_actions=["RE-PLAN RESPONSE", "WHY DID THE SEVERITY INCREASE?"]
+        )
+        self.chat_history.append(asst_msg)
+
+        return self.get_state()
 
     def extract_location_and_disaster(self, text: str) -> Tuple[Optional[str], Optional[str]]:
         text_lower = text.lower().strip()
@@ -101,7 +181,7 @@ class ScenarioManager:
                     extracted_loc = m.group(0).strip().title()
                     break
 
-        # 2. Match patterns if not in known cities (e.g., "in Ooty", "around Salem", "switch to Chennai")
+        # 2. Match patterns if not in known cities
         if not extracted_loc:
             pats = [
                 r'(?:in|near|around|at|for|switch to|location is|set location to)\s+([A-Z][a-zA-Z\s]+(?:,\s*[A-Z][a-zA-Z\s]+)?)',
@@ -140,15 +220,20 @@ class ScenarioManager:
     def get_state(self) -> SystemState:
         return SystemState(
             location=self.location,
+            disaster_type=self.disaster_type,
             situation_query=self.situation_query,
-            data_source_mode="SIMULATED DISASTER SCENARIO",
+            data_source_mode=self.data_source_mode,
+            dataset_metadata=self.dataset_metadata,
+            intelligence_result=self.intelligence_result,
             zones=self.zones,
             resources=self.resources,
             current_plan=self.current_plan,
+            previous_plan=self.previous_plan,
+            plan_differences=self.plan_differences,
             agent_activity=self.activity_logs,
             agent_recommendations=self.agent_recommendations,
             chat_history=self.chat_history,
-            active_agents_count=4,
+            active_agents_count=5,
             is_analyzed=self.is_analyzed,
             is_pending_replan=self.is_pending_replan,
             last_updated=datetime.now().strftime("%H:%M:%S")
@@ -159,7 +244,7 @@ class ScenarioManager:
         sit_trimmed = situation.strip() if situation else ""
 
         if not loc_trimmed:
-            raise ValueError("Please enter a disaster-response location.")
+            raise ValueError("Which location should I analyze? Please provide a city or region.")
         if not sit_trimmed:
             raise ValueError("Please describe the disaster situation.")
 
@@ -172,11 +257,18 @@ class ScenarioManager:
         # Run multi-agent pipeline
         self.run_full_pipeline(is_replan=False)
 
-        # Welcome assistant message
+        top_zone = self.intelligence_result.priority_zone_name if self.intelligence_result else "Zone B"
+        top_score = self.intelligence_result.overall_severity_score if self.intelligence_result else 84.0
+
         welcome_msg = ChatMessage(
             id=str(uuid.uuid4())[:8],
             sender="assistant",
-            content=f"Understood. I'll use **{self.location}** as the active disaster-response location for this simulated scenario: *\"{self.situation_query}\"*\n\n- **Medical Triage**: Zone B has the highest priority with 10 critical patients.\n- **Road Access**: Zone C Road 3 is **BLOCKED**. Logistics Agent rerouted evacuation via Road 4.\n- **Coordinated Plan**: Synthesized under fixed bounds ({self.resources.vehicles} Vehicles, {self.resources.medics} Medics).\n\nWhat would you like to inspect or execute next?",
+            content=f"Understood. **{self.location}** is set as the active disaster-response location for this scenario: *\"{self.situation_query}\"*\n\n"
+                    f"- **Disaster Intelligence**: Prototype Severity Score **{top_score}/100**. Priority Sector: **{top_zone}**.\n"
+                    f"- **Medical Triage**: Prioritizing sectors with high critical patients.\n"
+                    f"- **Road Network**: Zone C Road 3 is **BLOCKED**. Logistics Agent rerouted via Road 4.\n"
+                    f"- **Resource Caps**: Enforced under fixed bounds ({self.resources.vehicles} Vehicles, {self.resources.medics} Medics).\n\n"
+                    f"What would you like to inspect or execute next?",
             timestamp=datetime.now().strftime("%H:%M:%S"),
             agent_name="Coordinator Agent",
             suggested_actions=["CREATE RESPONSE PLAN", "GENERATE PUBLIC ALERT", "SHOW RESOURCE CONFLICTS", "+ ADD NEW DISASTER ZONE"]
@@ -188,30 +280,42 @@ class ScenarioManager:
     def run_full_pipeline(self, is_replan: bool = False) -> SystemState:
         prefix = "Dynamic Re-planning" if is_replan else "Response Planning"
         loc_str = self.location if self.location else "Active Scenario"
-        self._add_activity("coordinator", f"Initiating {prefix}", f"Executing multi-agent negotiation for {len(self.zones)} zones in {loc_str}.", "info")
 
-        # 1. Run Medical Agent
-        self._add_activity("medical", "Medical Agent Triaging", "Prioritizing injured & critical casualty density...", "info")
+        if is_replan and self.current_plan:
+            self.previous_plan = self.current_plan
+
+        self._add_activity("coordinator", f"Initiating {prefix}", f"Executing 5-agent coordination pipeline for {len(self.zones)} sectors in {loc_str}.", "info")
+
+        # 1. Run Disaster Intelligence Agent
+        self._add_activity("disaster_intelligence", "Disaster Intelligence Analyzing", "Evaluating rainfall, flood level, affected area & medical urgency...", "info")
+        intel_res, intel_rec = self.intelligence_agent.analyze_disaster(self.zones, loc_str, self.disaster_type)
+        self.intelligence_result = intel_res
+        self.agent_recommendations["disaster_intelligence_agent"] = intel_rec
+
+        # 2. Run Medical Agent
+        self._add_activity("medical", "Medical Agent Triaging", "Prioritizing critical trauma casualties & field medics...", "info")
         medical_rec = self.medical_agent.analyze(self.zones, self.resources)
         self.agent_recommendations["medical_agent"] = medical_rec
 
-        # 2. Run Logistics Agent
-        self._add_activity("logistics", "Logistics Agent Analyzing", "Evaluating road accessibility & vehicle routing...", "info")
+        # 3. Run Logistics Agent
+        self._add_activity("logistics", "Logistics Agent Analyzing", "Evaluating road accessibility & rescue fleet routing...", "info")
         logistics_rec = self.logistics_agent.analyze(self.zones, self.resources)
         self.agent_recommendations["logistics_agent"] = logistics_rec
 
-        # 3. Run Communication Agent
-        self._add_activity("communication", "Communications Agent Advising", "Drafting public safety alerts and evacuation advisories...", "info")
+        # 4. Run Communication Agent
+        self._add_activity("communication", "Communications Agent Advising", "Drafting public safety alerts for active location...", "info")
         comm_rec = self.communication_agent.analyze(self.zones, self.resources)
         self.agent_recommendations["communication_agent"] = comm_rec
 
-        # 4. Run Coordinator Agent
+        # 5. Run Coordinator Agent
         self._add_activity("coordinator", "Coordinator Agent Synthesizing", "Resolving multi-agent conflicts & validating hard resource bounds...", "info")
         new_plan = self.coordinator_agent.synthesize(
             zones=self.zones,
             resources=self.resources,
             recommendations=self.agent_recommendations,
-            previous_plan=self.current_plan
+            previous_plan=self.previous_plan,
+            location=loc_str,
+            disaster_type=self.disaster_type
         )
 
         if new_plan.conflicts:
@@ -219,9 +323,39 @@ class ScenarioManager:
                 self._add_activity("coordinator", "Resource Conflict Detected", c.description, "conflict")
                 self._add_activity("coordinator", "Conflict Resolved", c.resolution, "success")
 
+        # Calculate BEFORE vs AFTER differences if re-planning occurred
+        if is_replan and self.previous_plan and self.previous_plan.final_allocations:
+            diffs: List[PlanDifference] = []
+            prev_alloc_map = {a.zone_id: a for a in self.previous_plan.final_allocations}
+            for curr_alloc in new_plan.final_allocations:
+                prev_alloc = prev_alloc_map.get(curr_alloc.zone_id)
+                curr_zone = next((z for z in self.zones if z.id == curr_alloc.zone_id), None)
+                before_risk = prev_alloc.priority if prev_alloc else "Low"
+                after_risk = curr_alloc.priority
+                before_veh = prev_alloc.vehicles if prev_alloc else 0
+                after_veh = curr_alloc.vehicles
+                before_med = prev_alloc.medics if prev_alloc else 0
+                after_med = curr_alloc.medics
+
+                reason_text = curr_alloc.reason or "Resource re-allocation based on updated hazard severity."
+                diffs.append(PlanDifference(
+                    zone_id=curr_alloc.zone_id,
+                    zone_name=curr_alloc.zone_name,
+                    before_risk=before_risk,
+                    after_risk=after_risk,
+                    before_priority=before_risk,
+                    after_priority=after_risk,
+                    before_vehicles=before_veh,
+                    after_vehicles=after_veh,
+                    before_medics=before_med,
+                    after_medics=after_med,
+                    reason=reason_text
+                ))
+            self.plan_differences = diffs
+
         self.current_plan = new_plan
         self.is_pending_replan = False
-        self._add_activity("coordinator", "Response Plan Validated", f"Plan validated for {loc_str} under fixed limits ({self.resources.vehicles} vehicles, {self.resources.medics} medics).", "success")
+        self._add_activity("coordinator", "Response Plan Validated", f"Plan confirmed for {loc_str} under fixed limits ({self.resources.vehicles} vehicles, {self.resources.medics} medics).", "success")
 
         return self.get_state()
 
@@ -234,23 +368,37 @@ class ScenarioManager:
             injured=20,
             critical=8,
             risk="Critical",
+            rainfall_mm=290.0,
+            flood_level_m=4.2,
+            affected_area_km2=32.0,
+            road_access=0.10,
+            severity_score=92.0,
+            risk_level="Critical",
             evacuation_required=True,
             road_name="Road 5 -> Hospital Precinct",
             road_status="Blocked",
             alternate_route="South Ridge Relief Track",
-            description="Newly detected emergency: Hospital precinct hit by secondary landslide."
+            description="Newly detected emergency: Hospital precinct hit by secondary landslide & severe flooding."
         )
         existing_d = any(z.id == "zone-d" for z in self.zones)
         if not existing_d:
             self.zones.append(zone_d)
             self.is_pending_replan = True
             self.last_referenced_zone_id = "zone-d"
+
+            # Re-evaluate disaster intelligence
+            intel_res, intel_rec = self.intelligence_agent.analyze_disaster(self.zones, self.location or "Active Scenario", self.disaster_type)
+            self.intelligence_result = intel_res
+            self.agent_recommendations["disaster_intelligence_agent"] = intel_rec
+
             self._add_activity("system", "⚠️ NEW DISASTER ZONE DETECTED", "Zone D (Hospital Landslide) added to crisis roster. Ready for Re-Planning.", "warning")
-            
+
             asst_msg = ChatMessage(
                 id=str(uuid.uuid4())[:8],
                 sender="assistant",
-                content=f"⚠️ **NEW DISASTER ZONE DETECTED IN {self.location.upper() if self.location else 'SCENARIO'}**\n\n**Zone D (Hospital Landslide)**: 8 Critical, 20 Injured, Evacuation Required.\n\nClick **[ RE-PLAN RESPONSE ]** or say 'Re-plan' to trigger multi-agent re-allocation.",
+                content=f"⚠️ **NEW DISASTER ZONE DETECTED IN {self.location.upper() if self.location else 'SCENARIO'}**\n\n"
+                        f"**Zone D (Hospital Landslide)**: 8 Critical, 20 Injured, Flood Level: 4.2m, Prototype Severity Score: **92/100 (CRITICAL)**.\n\n"
+                        f"Click **[ 🔄 RE-PLAN RESPONSE ]** or say 'Re-plan' to trigger multi-agent re-allocation.",
                 timestamp=datetime.now().strftime("%H:%M:%S"),
                 agent_name="Coordinator Agent",
                 suggested_actions=["RE-PLAN RESPONSE", "SHOW RESOURCE CONFLICTS"]
@@ -274,184 +422,136 @@ class ScenarioManager:
         # STEP 1: PARSE LOCATION & DISASTER FROM NATURAL LANGUAGE FIRST
         extracted_loc, extracted_disaster = self.extract_location_and_disaster(user_text)
 
-        print(f"[DEBUG] USER MESSAGE: {user_text}")
-        print(f"[DEBUG] EXTRACTED LOCATION: {extracted_loc}")
-        print(f"[DEBUG] EXTRACTED DISASTER: {extracted_disaster}")
-
         # STEP 2: IF NEW LOCATION EXTRACTED, UPDATE SCENARIO STATE BEFORE AGENT REASONING
         if extracted_loc and (extracted_loc != self.location or not self.is_analyzed):
-            old_loc = self.location
             self.reset_scenario_for_new_location(extracted_loc, extracted_disaster or "Flood affecting multiple areas")
-            
-            reply = f"Understood. **{self.location}** is now the active disaster-response location for this simulated {self.situation_query}. I've initialized the 3 affected zones and prepared the multi-agent coordinator."
+
+            reply = f"Understood. **{self.location}** is now the active disaster-response location for this scenario ({self.situation_query}). I've initialized the crisis sectors and prepared the Disaster Intelligence pipeline."
             asst_msg = ChatMessage(
                 id=str(uuid.uuid4())[:8],
                 sender="assistant",
                 content=reply,
                 timestamp=datetime.now().strftime("%H:%M:%S"),
                 agent_name="Coordinator Agent",
-                suggested_actions=["CREATE RESPONSE PLAN", "WHICH ZONE IS MOST CRITICAL?", "GENERATE PUBLIC ALERT"]
+                suggested_actions=["CREATE RESPONSE PLAN", "WHICH ZONE IS HIGHEST RISK?", "GENERATE PUBLIC ALERT"]
             )
             self.chat_history.append(asst_msg)
             return self.get_state()
 
         # If location is still empty and user hasn't set one yet
         if not self.location and not self.is_analyzed:
-            reply = "I’m ready to coordinate a disaster-response scenario. Tell me the location and disaster situation you want to analyze (e.g., 'Flood affecting multiple areas in Coimbatore')."
+            reply = "Which location should I analyze? Please enter a city or region (e.g., 'Flood affecting Coimbatore' or 'Chennai')."
             asst_msg = ChatMessage(
                 id=str(uuid.uuid4())[:8],
                 sender="assistant",
                 content=reply,
                 timestamp=datetime.now().strftime("%H:%M:%S"),
-                agent_name="Coordinator Agent"
+                agent_name="Coordinator Agent",
+                suggested_actions=["Analyze Coimbatore", "Analyze Chennai", "Analyze Mumbai"]
             )
             self.chat_history.append(asst_msg)
             return self.get_state()
 
-        loc_str = self.location if self.location else "Active Location"
+        loc_str = self.location or "Active Scenario"
 
-        # Check for resource constraint changes
-        veh_match = re.search(r'(\d+)\s*(?:rescue\s*)?vehicles?', text_lower)
-        med_match = re.search(r'(\d+)\s*medics?', text_lower)
+        # 3. CREATE RESPONSE PLAN
+        if "plan" in text_lower or "coordinate" in text_lower or "allocate" in text_lower:
+            if not self.current_plan or self.is_pending_replan:
+                self.run_full_pipeline(is_replan=self.is_pending_replan)
 
-        updated_resources = False
-        if veh_match:
-            new_veh = int(veh_match.group(1))
-            self.resources.vehicles = new_veh
-            updated_resources = True
-        if med_match:
-            new_med = int(med_match.group(1))
-            self.resources.medics = new_med
-            updated_resources = True
+            alloc_summary = "\n".join([
+                f"- **{a.zone_name}**: 🚑 {a.vehicles} Vehicles | 🏥 {a.medics} Medics | ⛺ {a.shelter_units} Shelters (Priority: **{a.priority}**, Score: {a.severity_score}/100)"
+                for a in self.current_plan.final_allocations
+            ])
+            reply_text = f"📋 **COORDINATED RESPONSE PLAN FOR {loc_str.upper()}**\n\n{alloc_summary}\n\n**Decision Rationale**: {self.current_plan.explanation}"
+            actions = ["GENERATE PUBLIC ALERT", "WHY?", "SHOW RESOURCE CONFLICTS", "+ ADD NEW DISASTER ZONE"]
 
-        if updated_resources:
-            self._add_activity("system", "Resource Limit Set", f"Updated resource bounds to {self.resources.vehicles} vehicles and {self.resources.medics} medics.", "warning")
+        # 4. GENERATE PUBLIC ALERT
+        elif "alert" in text_lower or "public" in text_lower or "warning" in text_lower or "evacuate" in text_lower:
+            alert = self.communication_agent.generate_public_alert(self.zones, location=loc_str, disaster_type=self.disaster_type)
+            if self.current_plan:
+                self.current_plan.public_alert = alert
 
-        # Intent Recognition Matrix
+            reply_text = f"📢 **PUBLIC EMERGENCY ALERT DRAFT — {loc_str.upper()}**\n\n**Title**: {alert.title}\n**Target Sector**: {alert.target_zone}\n**Approved Route**: {alert.approved_route}\n\n*\"{alert.message}\"*\n\n*(Label: {alert.label})*"
+            actions = ["CREATE RESPONSE PLAN", "WHICH ZONE IS HIGHEST RISK?"]
 
-        # 1. ADD NEW DISASTER ZONE
-        if "new disaster" in text_lower or "add zone d" in text_lower or "new incident" in text_lower or "landslide" in text_lower or "new emergency" in text_lower:
-            self.add_preset_zone_d()
-            return self.get_state()
+        # 5. DATASET / HAZARD METRIC QUESTIONS
+        elif "rainfall" in text_lower or "flood level" in text_lower or "dataset" in text_lower or "highest flood" in text_lower or "average rainfall" in text_lower or "affected area" in text_lower:
+            max_rain_zone = max(self.zones, key=lambda z: z.rainfall_mm)
+            max_flood_zone = max(self.zones, key=lambda z: z.flood_level_m)
+            max_area_zone = max(self.zones, key=lambda z: z.affected_area_km2)
+            avg_rain = round(sum(z.rainfall_mm for z in self.zones) / len(self.zones), 1)
 
-        # 2. TRIGGER RE-PLANNING / DO IT
-        elif "re-plan" in text_lower or "replan" in text_lower or text_lower == "do it" or "reallocate" in text_lower or "update plan" in text_lower:
-            self.run_full_pipeline(is_replan=True)
-            
-            reply_text = (
-                f"⚡ **DYNAMIC RE-PLANNING EXECUTED FOR {loc_str.upper()}**\n\n"
-                f"The Medical, Logistics, and Communications agents re-evaluated priorities under fixed limits ({self.resources.vehicles} Vehicles, {self.resources.medics} Medics).\n\n"
-                f"**WHY DID THE PLAN CHANGE?**\n{self.current_plan.explanation}"
-            )
-            actions = ["WHY DID THE PLAN CHANGE?", "GENERATE PUBLIC ALERT", "SHOW RESOURCE CONFLICTS"]
+            if "highest rainfall" in text_lower or "max rainfall" in text_lower:
+                reply_text = f"🌧️ **HIGHEST RAINFALL RECORDED ({loc_str})**:\n- **{max_rain_zone.name}** has the highest rainfall at **{max_rain_zone.rainfall_mm} mm** (Flood level: {max_rain_zone.flood_level_m}m, Severity Score: {max_rain_zone.severity_score}/100)."
+            elif "highest flood" in text_lower or "flood level" in text_lower:
+                reply_text = f"🌊 **HIGHEST FLOOD LEVEL RECORDED ({loc_str})**:\n- **{max_flood_zone.name}** has the highest flood level at **{max_flood_zone.flood_level_m} m** (Rainfall: {max_flood_zone.rainfall_mm}mm, Risk: **{max_flood_zone.risk_level}**)."
+            elif "average rainfall" in text_lower:
+                reply_text = f"📊 **AVERAGE RAINFALL ({loc_str})**:\n- Average rainfall across {len(self.zones)} sectors is **{avg_rain} mm**."
+            elif "affected area" in text_lower:
+                reply_text = f"📐 **LARGEST AFFECTED AREA ({loc_str})**:\n- **{max_area_zone.name}** has the largest affected area at **{max_area_zone.affected_area_km2} km²**."
+            else:
+                reply_text = f"📊 **DISASTER DATASET ANALYSIS ({loc_str})**:\n- Data Source: **{self.data_source_mode}**\n- Max Rainfall: **{max_rain_zone.rainfall_mm} mm** ({max_rain_zone.name})\n- Max Flood Level: **{max_flood_zone.flood_level_m} m** ({max_flood_zone.name})\n- Total Affected Area: **{sum(z.affected_area_km2 for z in self.zones)} km²**"
 
-        # 3. GENERATE PUBLIC ALERT
-        elif "alert" in text_lower or "public message" in text_lower or "broadcast" in text_lower or "evacuation message" in text_lower:
-            if not self.current_plan:
-                self.run_full_pipeline(is_replan=False)
-            
-            alert = self.current_plan.public_alert
-            reply_text = (
-                f"📢 **PUBLIC EMERGENCY ALERT DRAFT — {loc_str.upper()}**\n\n"
-                f"**Title**: {alert.title}\n"
-                f"**Target Sector**: {alert.target_zone}\n"
-                f"**Approved Route**: {alert.approved_route}\n\n"
-                f"**Message Body**:\n\"{alert.message}\"\n\n"
-                f"*Label*: `{alert.label}`"
-            )
-            actions = ["COPY ALERT", "WHY THIS PLAN?", "+ ADD NEW DISASTER ZONE"]
+            actions = ["WHICH ZONE IS HIGHEST RISK?", "CREATE RESPONSE PLAN"]
 
-        # 4. CREATE / SHOW RESPONSE PLAN
-        elif "create" in text_lower and "plan" in text_lower or "make a plan" in text_lower or "response plan" in text_lower or "what should we do" in text_lower or "give me an emergency plan" in text_lower or updated_resources:
-            self.run_full_pipeline(is_replan=bool(self.current_plan))
-            
-            plan_summary = []
-            for a in self.current_plan.final_allocations:
-                plan_summary.append(f"- **{a.zone_name}**: 🚑 {a.vehicles} Vehicles | 🏥 {a.medics} Medics | 🏠 {a.shelter_units} Shelters | Priority: **{a.priority}**")
-
-            reply_text = (
-                f"🧠 **COORDINATED RESPONSE PLAN FOR {loc_str.upper()}**\n\n"
-                + "\n".join(plan_summary) +
-                f"\n\n📊 **RESOURCE USAGE**: Vehicles: {self.current_plan.resource_usage['vehicles']['allocated']}/{self.resources.vehicles} | Medics: {self.current_plan.resource_usage['medics']['allocated']}/{self.resources.medics}\n\n"
-                f"💡 **WHY THIS PLAN?**\n{self.current_plan.explanation}"
-            )
-            actions = ["+ ADD NEW DISASTER ZONE", "GENERATE PUBLIC ALERT", "WHY THIS PLAN?"]
-
-        # 5. ASK CRITICAL ZONE / MEDICAL PRIORITY
-        elif "critical" in text_lower or "medical support" in text_lower or "medical priority" in text_lower or "most urgent" in text_lower:
-            crit_zone = max(self.zones, key=lambda z: (z.critical, z.injured))
+        # 6. ASK CRITICAL / HIGHEST RISK ZONE
+        elif "risk" in text_lower or "critical" in text_lower or "priority" in text_lower or "urgent" in text_lower:
+            crit_zone = max(self.zones, key=lambda z: (z.severity_score, z.critical))
             self.last_referenced_zone_id = crit_zone.id
-            reply_text = f"**{crit_zone.name}** currently has the highest medical priority in **{loc_str}** because it has **{crit_zone.critical} critical patients** and {crit_zone.injured} total injured casualties."
-            actions = ["WHY?", "HOW MANY VEHICLES ARE AVAILABLE?", "CREATE RESPONSE PLAN"]
+            factors = self.intelligence_result.contributing_factors if self.intelligence_result else {}
+            factor_str = ", ".join([f"{k}: {v}" for k, v in factors.items()]) or "High rainfall & flood severity"
 
-        # 6. ASK WHY / EXPLAIN DECISION
+            reply_text = f"🔴 **HIGHEST RISK SECTOR IN {loc_str.upper()}**:\n- **Sector**: {crit_zone.name}\n- **Prototype Severity Score**: **{crit_zone.severity_score} / 100 ({crit_zone.risk_level})**\n- **Hazard Telemetry**: Rainfall {crit_zone.rainfall_mm}mm | Flood Level {crit_zone.flood_level_m}m | Affected Area {crit_zone.affected_area_km2}km²\n- **Casualties**: {crit_zone.critical} Critical, {crit_zone.injured} Injured\n- **Contributing Factors**: {factor_str}"
+            actions = ["WHY?", "CREATE RESPONSE PLAN", "HOW MANY VEHICLES ARE AVAILABLE?"]
+
+        # 7. ASK WHY / EXPLAIN DECISION
         elif "why" in text_lower or "explain" in text_lower or "tradeoff" in text_lower:
             ref_zone = next((z for z in self.zones if z.id == self.last_referenced_zone_id), self.zones[0])
             if self.current_plan:
                 exp = self.current_plan.explanation
             else:
-                exp = f"{ref_zone.name} in {loc_str} received priority because it has {ref_zone.critical} critical patients. Since resources are strictly limited ({self.resources.medics} medics available), the Coordinator prioritized high-severity trauma sectors."
-            
+                exp = f"{ref_zone.name} in {loc_str} received priority due to a Prototype Severity Score of {ref_zone.severity_score}/100 ({ref_zone.rainfall_mm}mm rainfall, {ref_zone.flood_level_m}m flood level, {ref_zone.critical} critical patients)."
+
             reply_text = f"💡 **EXPLAINABILITY RATIONALE**\n\n{exp}"
             actions = ["HOW MANY VEHICLES ARE LEFT?", "+ ADD NEW DISASTER ZONE"]
 
-        # 7. ASK RESOURCE COUNT / VEHICLES LEFT
+        # 8. ASK RESOURCE COUNT / VEHICLES LEFT
         elif "vehicle" in text_lower or "medic" in text_lower or "resource" in text_lower or "left" in text_lower or "remaining" in text_lower or "available" in text_lower:
             alloc_veh = sum(a.vehicles for a in self.current_plan.final_allocations) if self.current_plan else 0
             alloc_med = sum(a.medics for a in self.current_plan.final_allocations) if self.current_plan else 0
             unalloc_veh = max(0, self.resources.vehicles - alloc_veh)
             unalloc_med = max(0, self.resources.medics - alloc_med)
 
-            if "what if" in text_lower or "only have 3" in text_lower or "reduce" in text_lower:
-                reply_text = f"With only {self.resources.vehicles} vehicles available in {loc_str}, the current allocation would exceed capacity. I recommend re-planning the vehicle allocation across all affected zones."
-                actions = ["RE-PLAN RESPONSE", "SHOW RESOURCE CONFLICTS"]
-            else:
-                reply_text = f"We currently have **{self.resources.vehicles} total rescue vehicles** ({alloc_veh} allocated across active zones in {loc_str}, {unalloc_veh} unallocated) and **{self.resources.medics} total medics** ({alloc_med} allocated)."
-                actions = ["CREATE RESPONSE PLAN", "WHAT IF WE ONLY HAVE 3 VEHICLES?"]
+            reply_text = f"⚡ **RESOURCE INVENTORY ({loc_str.upper()})**:\n- **Rescue Vehicles**: {self.resources.vehicles} Total ({alloc_veh} Allocated, {unalloc_veh} Unallocated)\n- **Medical Staff**: {self.resources.medics} Total ({alloc_med} Allocated, {unalloc_med} Unallocated)\n- **Shelters**: {self.resources.shelters} Units | **Supplies**: {self.resources.supplies} Units"
+            actions = ["CREATE RESPONSE PLAN", "SHOW RESOURCE CONFLICTS"]
 
-        # 8. ASK ROAD CONDITIONS / EVACUATION ROUTES
-        elif "road" in text_lower or "blocked" in text_lower or "route" in text_lower or "evacuation" in text_lower:
+        # 9. ASK ROAD CONDITIONS / ROUTES
+        elif "road" in text_lower or "route" in text_lower or "bypass" in text_lower:
             blocked = [z for z in self.zones if z.road_status == "Blocked"]
             congested = [z for z in self.zones if z.road_status == "Congested"]
-            
             blocked_str = ", ".join([f"{z.name} ({z.road_name})" for z in blocked]) or "None"
-            congested_str = ", ".join([f"{z.name} ({z.road_name})" for z in congested]) or "None"
 
-            reply_text = f"🛣️ **ROAD NETWORK STATUS ({loc_str.upper()})**:\n- **Blocked Roads**: {blocked_str}\n- **Congested Roads**: {congested_str}\n- **Alternate Bypass**: Zone C Road 3 is Blocked; Logistics Agent rerouted traffic via **Road 4 (North Ridge Bypass)**."
+            reply_text = f"🛣️ **ROAD NETWORK TELEMETRY ({loc_str.upper()})**:\n- **Blocked Roads**: {blocked_str}\n- **Alternate Bypass**: Zone C Road 3 is Blocked; Logistics Agent rerouted traffic via **Road 4 (North Ridge Bypass)**."
             actions = ["GENERATE PUBLIC ALERT", "CREATE RESPONSE PLAN"]
 
-        # 9. ASK SPECIFIC ZONE DETAILS
-        elif "zone a" in text_lower or "zone b" in text_lower or "zone c" in text_lower or "zone d" in text_lower:
-            target_id = "zone-a" if "zone a" in text_lower else ("zone-b" if "zone b" in text_lower else ("zone-c" if "zone c" in text_lower else "zone-d"))
-            self.last_referenced_zone_id = target_id
-            target_zone = next((z for z in self.zones if z.id == target_id), None)
+        # 10. RE-PLAN / WHAT CHANGED
+        elif "replan" in text_lower or "re-plan" in text_lower or "change" in text_lower:
+            self.run_full_pipeline(is_replan=True)
+            diff_text = "\n".join([f"- **{d.zone_name}**: Vehicles ({d.before_vehicles} -> {d.after_vehicles}), Medics ({d.before_medics} -> {d.after_medics}). Reason: {d.reason}" for d in self.plan_differences]) or "No allocation changes required."
 
-            if target_zone:
-                alloc = next((a for a in (self.current_plan.final_allocations if self.current_plan else []) if a.zone_id == target_id), None)
-                alloc_str = f"Assigned: 🚑 {alloc.vehicles} Vehicles, 🏥 {alloc.medics} Medics." if alloc else "No resources assigned yet."
-                reply_text = f"📍 **{target_zone.name} STATUS ({loc_str})**:\n- Population: {target_zone.population}\n- Casualties: {target_zone.injured} Injured ({target_zone.critical} Critical)\n- Risk: **{target_zone.risk}**\n- Road Status: {target_zone.road_name} ({target_zone.road_status})\n- {alloc_str}"
-            else:
-                reply_text = f"That zone is not currently in the active crisis map for {loc_str}."
-            actions = ["WHY?", "CREATE RESPONSE PLAN"]
-
-        # 10. SHOW RESOURCE CONFLICTS
-        elif "conflict" in text_lower:
-            if self.current_plan and self.current_plan.conflicts:
-                conf_descs = "\n".join([f"- **{c.resource_type.upper()}**: {c.description}" for c in self.current_plan.conflicts])
-                reply_text = f"⚠️ **RESOURCE CONFLICTS DETECTED IN {loc_str.upper()}**:\n{conf_descs}\n\n**Coordinator Resolution**: {self.current_plan.agent_negotiation.coordinator_resolution if self.current_plan.agent_negotiation else 'Allocations scaled strictly to fixed bounds.'}"
-            else:
-                reply_text = f"No active resource conflicts in {loc_str}. All allocations are within the fixed resource limits."
-            actions = ["CREATE RESPONSE PLAN", "RE-PLAN RESPONSE"]
+            reply_text = f"🔄 **DYNAMIC RE-PLANNING EXECUTED ({loc_str.upper()})**:\n\n**WHAT CHANGED?**\n{diff_text}\n\n**WHY?**\n{self.current_plan.explanation}"
+            actions = ["GENERATE PUBLIC ALERT", "SHOW RESOURCE CONFLICTS"]
 
         # 11. GENERAL CONVERSATIONAL / LLM GENERATED
         else:
-            system_ctx = f"Location: {loc_str}. Situation: {self.situation_query}. Zones: {[z.name for z in self.zones]}. Resources: {self.resources.vehicles} vehicles, {self.resources.medics} medics."
+            system_ctx = f"Location: {loc_str}. Disaster: {self.disaster_type}. Zones: {[z.name for z in self.zones]}. Overall Severity: {self.intelligence_result.overall_severity_score if self.intelligence_result else 84}/100."
             llm_text = llm_service.generate_chat_response(system_ctx, user_text, [m.dict() for m in self.chat_history])
-            
+
             if llm_text:
                 reply_text = llm_text
             else:
-                reply_text = f"I am monitoring **{loc_str}** with 4 core agents (Medical, Logistics, Communications, Coordinator). You can ask me about critical zones, road blockages, resource counts, public alerts, or response plans."
+                reply_text = f"I am monitoring **{loc_str}** with 5 specialized AI agents (Disaster Intelligence, Medical, Logistics, Communications, Coordinator). Ask me about risk levels, rainfall data, public alerts, or response plans."
             actions = ["CREATE RESPONSE PLAN", "GENERATE PUBLIC ALERT", "+ ADD NEW DISASTER ZONE"]
 
         asst_msg = ChatMessage(

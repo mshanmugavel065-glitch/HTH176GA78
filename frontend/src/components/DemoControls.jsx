@@ -1,5 +1,6 @@
 import React from 'react';
-import { Play, PlusCircle, Zap, RefreshCw, AlertTriangle, ArrowRight } from 'lucide-react';
+import { Play, PlusCircle, Zap, RefreshCw, AlertTriangle, CloudRain } from 'lucide-react';
+import DatasetUpload from './DatasetUpload';
 
 export default function DemoControls({
   systemState,
@@ -7,9 +8,11 @@ export default function DemoControls({
   onAddZoneD,
   onReplan,
   onReset,
+  onSimulateHazardUpdate,
   isProcessing,
   onStartAutoDemo,
-  demoStep
+  demoStep,
+  onUploadComplete
 }) {
   const hasZoneD = systemState?.zones?.some(z => z.id === 'zone-d');
   const isPendingReplan = systemState?.is_pending_replan || hasZoneD;
@@ -41,7 +44,7 @@ export default function DemoControls({
               )}
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Simulate multi-agent negotiation, road network routing, fixed resource bounds, and dynamic re-planning.
+              Simulate disaster intelligence hazard assessment, dataset upload, resource allocation, and dynamic re-planning.
             </p>
           </div>
         </div>
@@ -49,11 +52,28 @@ export default function DemoControls({
         {/* Action Buttons Group */}
         <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto justify-end">
           
+          {/* Dataset Upload Component */}
+          <DatasetUpload
+            onUploadComplete={onUploadComplete}
+            metadata={systemState?.dataset_metadata}
+          />
+
+          {/* Simulate Hazard Update Button (Rainfall Increase) */}
+          <button
+            onClick={onSimulateHazardUpdate}
+            disabled={isProcessing}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 hover:text-white text-xs font-mono font-semibold transition-all cursor-pointer shadow-sm"
+            title="Simulate +50mm rainfall surge and elevated flood level"
+          >
+            <CloudRain className="w-3.5 h-3.5 text-blue-400" />
+            <span>🌧️ SURGE RAINFALL (+50mm)</span>
+          </button>
+
           {/* Start Response Simulation Button */}
           <button
             onClick={onStartAutoDemo}
             disabled={isProcessing}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-purple-500/25 transition-all duration-200 transform hover:-translate-y-0.5 disabled:opacity-50 cursor-pointer font-mono"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-purple-500/25 transition-all duration-200 cursor-pointer font-mono"
           >
             <Play className="w-4 h-4 fill-current" />
             <span>[ ▶ START RESPONSE SIMULATION ]</span>
@@ -64,7 +84,7 @@ export default function DemoControls({
             <button
               onClick={onRunPlan}
               disabled={isProcessing}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs shadow-lg shadow-cyan-600/25 transition-all duration-200 disabled:opacity-50 cursor-pointer font-mono"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs shadow-lg shadow-cyan-600/25 transition-all duration-200 cursor-pointer font-mono"
             >
               <Zap className="w-4 h-4" />
               <span>CREATE RESPONSE PLAN</span>
@@ -76,47 +96,33 @@ export default function DemoControls({
             <button
               onClick={onAddZoneD}
               disabled={isProcessing}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-lg shadow-amber-600/25 transition-all duration-200 disabled:opacity-50 cursor-pointer font-mono"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-lg shadow-amber-600/25 transition-all duration-200 cursor-pointer font-mono"
             >
               <PlusCircle className="w-4 h-4" />
               <span>[ + ADD NEW DISASTER ZONE ]</span>
             </button>
           ) : (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono font-medium">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono font-medium">
               <AlertTriangle className="w-4 h-4 text-amber-400 animate-bounce" />
               <span>ZONE D DETECTED</span>
             </div>
           )}
 
           {/* Re-plan Button */}
-          {hasZoneD && (
+          {isPendingReplan && (
             <button
               onClick={onReplan}
               disabled={isProcessing}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-bold text-xs shadow-xl shadow-red-600/30 transition-all duration-200 transform hover:scale-105 animate-pulse disabled:opacity-50 cursor-pointer font-mono"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-bold text-xs shadow-xl shadow-red-600/30 transition-all duration-200 transform hover:scale-105 animate-pulse cursor-pointer font-mono"
             >
               <Zap className="w-4 h-4 fill-current" />
-              <span>[ RE-PLAN RESPONSE ]</span>
+              <span>[ 🔄 RE-PLAN RESPONSE ]</span>
             </button>
           )}
 
         </div>
 
       </div>
-
-      {/* Dynamic Re-planning Alert Banner */}
-      {hasZoneD && (
-        <div className="mt-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3 text-xs text-amber-200 font-mono">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 animate-bounce" />
-            <span>
-              <strong>⚠️ NEW DISASTER ZONE DETECTED:</strong> Zone D (Hospital Landslide - 8 Critical, 20 Injured). Click <strong>[ RE-PLAN RESPONSE ]</strong> to trigger multi-agent re-allocation.
-            </span>
-          </div>
-          <ArrowRight className="w-4 h-4 text-amber-400 animate-pulse shrink-0" />
-        </div>
-      )}
-
     </div>
   );
 }

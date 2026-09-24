@@ -1,81 +1,113 @@
 import React from 'react';
-import { AlertCircle, Users, HeartPulse, AlertTriangle, Navigation, Truck, Stethoscope, Home, Package, Trash2 } from 'lucide-react';
+import { CloudRain, Waves, Users, HeartPulse, AlertTriangle, Navigation, Truck, Stethoscope, Home, Package, Trash2, ShieldAlert } from 'lucide-react';
 
 export default function ZoneCard({ zone, allocation, onDelete }) {
-  const isCritical = zone.risk === 'Critical';
-  const isHigh = zone.risk === 'High';
+  const riskLevel = zone.risk_level || zone.risk || 'Moderate';
+  const isCritical = riskLevel.toLowerCase() === 'critical';
+  const isVeryHigh = riskLevel.toLowerCase() === 'very high';
+  const isHigh = riskLevel.toLowerCase() === 'high';
 
   const riskBadgeStyle = isCritical
-    ? 'bg-red-500/20 text-red-300 border-red-500/40 animate-pulse'
+    ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 animate-pulse'
+    : isVeryHigh
+    ? 'bg-orange-500/20 text-orange-300 border-orange-500/50'
     : isHigh
-    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40';
+    ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50';
 
   const cardBorderStyle = isCritical
-    ? 'glass-card-glow-red'
+    ? 'glass-card-glow-red border-rose-500/40'
     : zone.id === 'zone-d'
     ? 'border-amber-500/50 bg-slate-900/90 shadow-lg shadow-amber-500/10'
     : 'glass-card';
 
+  const severityScore = zone.severity_score || 0.0;
+
   return (
-    <div className={`rounded-2xl p-5 border transition-all duration-300 relative overflow-hidden ${cardBorderStyle}`}>
+    <div className={`rounded-2xl p-5 border transition-all duration-300 relative overflow-hidden flex flex-col justify-between ${cardBorderStyle}`}>
       
-      {/* Zone Header */}
-      <div className="flex items-start justify-between gap-3 mb-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-base font-bold text-white font-mono">{zone.name}</h3>
-            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border uppercase ${riskBadgeStyle}`}>
-              {zone.risk} Risk
-            </span>
+      <div>
+        {/* Zone Header */}
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-base font-bold text-white font-mono">{zone.name}</h3>
+              <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border uppercase ${riskBadgeStyle}`}>
+                {riskLevel}
+              </span>
+            </div>
+            {zone.description && (
+              <p className="text-xs text-slate-400 mt-1 line-clamp-2">{zone.description}</p>
+            )}
           </div>
-          {zone.description && (
-            <p className="text-xs text-slate-400 mt-1 line-clamp-2">{zone.description}</p>
+
+          {/* Delete Zone Button (if custom/Zone D) */}
+          {zone.id === 'zone-d' && onDelete && (
+            <button
+              onClick={() => onDelete(zone.id)}
+              className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-rose-400 hover:bg-slate-700 transition-colors cursor-pointer"
+              title="Remove Sector"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
           )}
         </div>
 
-        {/* Delete Zone Button (if custom/Zone D) */}
-        {zone.id === 'zone-d' && onDelete && (
-          <button
-            onClick={() => onDelete(zone.id)}
-            className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-red-400 hover:bg-slate-700 transition-colors"
-            title="Remove Zone"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        )}
-      </div>
+        {/* Hazard Metrics Banner (Rainfall, Flood Level, Severity Score) */}
+        <div className="grid grid-cols-3 gap-2 mb-3 bg-slate-950/80 p-2.5 rounded-xl border border-slate-800/80 font-mono text-center">
+          <div className="flex flex-col">
+            <span className="text-[9px] text-slate-400 uppercase flex items-center justify-center gap-1">
+              <CloudRain className="w-3 h-3 text-cyan-400" /> Rain
+            </span>
+            <span className="text-xs font-bold text-cyan-300 mt-0.5">{zone.rainfall_mm || 0}mm</span>
+          </div>
 
-      {/* Primary Metrics Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4 bg-slate-950/60 p-3 rounded-xl border border-slate-800 font-mono">
-        <div className="flex flex-col">
-          <span className="text-[10px] text-slate-400 uppercase flex items-center gap-1">
-            <Users className="w-3 h-3 text-cyan-400" /> Pop
-          </span>
-          <span className="text-sm font-bold text-white mt-0.5">{zone.population}</span>
+          <div className="flex flex-col">
+            <span className="text-[9px] text-slate-400 uppercase flex items-center justify-center gap-1">
+              <Waves className="w-3 h-3 text-blue-400" /> Flood
+            </span>
+            <span className="text-xs font-bold text-blue-300 mt-0.5">{zone.flood_level_m || 0}m</span>
+          </div>
+
+          <div className="flex flex-col">
+            <span className="text-[9px] text-slate-400 uppercase flex items-center justify-center gap-1">
+              <ShieldAlert className="w-3 h-3 text-purple-400" /> Score
+            </span>
+            <span className="text-xs font-bold text-purple-300 mt-0.5">{severityScore}/100</span>
+          </div>
         </div>
 
-        <div className="flex flex-col">
-          <span className="text-[10px] text-slate-400 uppercase flex items-center gap-1">
-            <HeartPulse className="w-3 h-3 text-rose-400" /> Injured
-          </span>
-          <span className="text-sm font-bold text-rose-300 mt-0.5">{zone.injured}</span>
-        </div>
+        {/* Secondary Metrics Grid */}
+        <div className="grid grid-cols-4 gap-1.5 mb-4 bg-slate-950/40 p-2.5 rounded-xl border border-slate-800 font-mono">
+          <div className="flex flex-col">
+            <span className="text-[9px] text-slate-400 uppercase flex items-center gap-0.5">
+              <Users className="w-2.5 h-2.5 text-slate-400" /> Pop
+            </span>
+            <span className="text-xs font-bold text-slate-200 mt-0.5">{zone.population}</span>
+          </div>
 
-        <div className="flex flex-col">
-          <span className="text-[10px] text-slate-400 uppercase flex items-center gap-1">
-            <AlertTriangle className="w-3 h-3 text-red-500" /> Critical
-          </span>
-          <span className="text-sm font-bold text-red-400 mt-0.5">{zone.critical}</span>
-        </div>
+          <div className="flex flex-col">
+            <span className="text-[9px] text-slate-400 uppercase flex items-center gap-0.5">
+              <HeartPulse className="w-2.5 h-2.5 text-rose-400" /> Injured
+            </span>
+            <span className="text-xs font-bold text-rose-300 mt-0.5">{zone.injured}</span>
+          </div>
 
-        <div className="flex flex-col">
-          <span className="text-[10px] text-slate-400 uppercase flex items-center gap-1">
-            <Navigation className="w-3 h-3 text-amber-400" /> Evac
-          </span>
-          <span className={`text-xs font-bold mt-0.5 ${zone.evacuation_required ? 'text-amber-400' : 'text-slate-400'}`}>
-            {zone.evacuation_required ? 'REQUIRED' : 'No'}
-          </span>
+          <div className="flex flex-col">
+            <span className="text-[9px] text-slate-400 uppercase flex items-center gap-0.5">
+              <AlertTriangle className="w-2.5 h-2.5 text-rose-500" /> Crit
+            </span>
+            <span className="text-xs font-bold text-rose-400 mt-0.5">{zone.critical}</span>
+          </div>
+
+          <div className="flex flex-col">
+            <span className="text-[9px] text-slate-400 uppercase flex items-center gap-0.5">
+              <Navigation className="w-2.5 h-2.5 text-amber-400" /> Evac
+            </span>
+            <span className={`text-[11px] font-bold mt-0.5 ${zone.evacuation_required ? 'text-amber-400' : 'text-slate-400'}`}>
+              {zone.evacuation_required ? 'YES' : 'NO'}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -99,27 +131,21 @@ export default function ZoneCard({ zone, allocation, onDelete }) {
             </div>
 
             <div className="bg-slate-800/80 p-2 rounded-lg border border-slate-700">
-              <Home className="w-3.5 h-3.5 text-emerald-400 mx-auto mb-1" />
+              <Home className="w-3.5 h-3.5 text-purple-400 mx-auto mb-1" />
               <span className="text-xs font-bold text-white block">{allocation.shelter_units}</span>
               <span className="text-[9px] text-slate-400">Shelters</span>
             </div>
 
             <div className="bg-slate-800/80 p-2 rounded-lg border border-slate-700">
-              <Package className="w-3.5 h-3.5 text-amber-400 mx-auto mb-1" />
+              <Package className="w-3.5 h-3.5 text-emerald-400 mx-auto mb-1" />
               <span className="text-xs font-bold text-white block">{allocation.supplies}</span>
               <span className="text-[9px] text-slate-400">Supplies</span>
             </div>
           </div>
-
-          {allocation.reason && (
-            <p className="text-[11px] text-slate-400 italic mt-2 bg-slate-950/40 p-2 rounded border border-slate-800/80">
-              "{allocation.reason}"
-            </p>
-          )}
         </div>
       ) : (
-        <div className="pt-3 border-t border-slate-800 text-center text-xs text-slate-400 italic font-mono">
-          Pending Multi-Agent Plan Generation...
+        <div className="pt-3 border-t border-slate-800 text-center">
+          <span className="text-xs font-mono text-slate-500 italic">No resources allocated yet</span>
         </div>
       )}
 

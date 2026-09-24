@@ -17,7 +17,7 @@ class CoordinatorAgent(BaseAgent):
         super().__init__(
             agent_id="coordinator_agent",
             agent_name="Coordinator Agent",
-            priority_focus="Master Orchestration & Conflict Resolution"
+            priority_focus="Master Orchestration & Resource Constraint Solver"
         )
         self.comm_agent = CommunicationAgent()
 
@@ -26,9 +26,11 @@ class CoordinatorAgent(BaseAgent):
         zones: List[DisasterZone],
         resources: ResourcePool,
         recommendations: Dict[str, AgentRecommendation],
-        previous_plan: Optional[CoordinatorPlan] = None
+        previous_plan: Optional[CoordinatorPlan] = None,
+        location: str = "Active Sector",
+        disaster_type: str = "Flood"
     ) -> CoordinatorPlan:
-        
+
         # 1. Gather all raw recommendations
         all_raw_allocations: List[ZoneAllocation] = []
         for agent_id, agent_rec in recommendations.items():
@@ -39,6 +41,11 @@ class CoordinatorAgent(BaseAgent):
 
         # 3. Enforce hard limits deterministically via ResourceValidator
         final_allocations = validator.enforce_hard_limits(zones, all_raw_allocations, resources)
+
+        # Ensure severity score is preserved on final allocations
+        zone_score_map = {z.id: z.severity_score for z in zones}
+        for alloc in final_allocations:
+            alloc.severity_score = zone_score_map.get(alloc.zone_id, alloc.severity_score)
 
         # 4. Calculate actual resource usage numbers
         total_veh = sum(a.vehicles for a in final_allocations)
@@ -69,7 +76,7 @@ class CoordinatorAgent(BaseAgent):
                             resource_type="medics",
                             before=prev.medics,
                             after=curr.medics,
-                            reason=f"Medics re-allocated by {direction} based on critical patient concentration."
+                            reason=f"Medics re-allocated by {direction} based on critical patient density & severity score."
                         ))
                     if prev.vehicles != curr.vehicles:
                         diff = curr.vehicles - prev.vehicles
@@ -84,34 +91,37 @@ class CoordinatorAgent(BaseAgent):
                         ))
 
         # 6. Multi-Agent Negotiation Summary
-        medical_rec_summary = "Medical Agent requested priority medics for Zone B (10 Critical) and Zone D (8 Critical)."
-        logistics_rec_summary = "Logistics Agent requested vehicle fleet for Zone C evacuation bypass (Road 3 Blocked)."
-        comm_rec_summary = "Communications Agent requested priority shelter & public alert broadcast for Zone C & Zone D."
-        
+        intel_rec_summary = "Disaster Intelligence Agent identified top severity sectors based on rainfall, flood level, and medical urgency."
+        medical_rec_summary = "Medical Agent requested priority medics for sectors with high critical trauma casualties."
+        logistics_rec_summary = "Logistics Agent requested vehicle fleet for evacuation corridors and blocked road bypasses."
+        comm_rec_summary = "Communications Agent requested priority shelter & public alert broadcasts for high-hazard sectors."
+
         conflict_res_text = (
             f"Coordinator resolved conflict across available bounds ({resources.vehicles} vehicles, {resources.medics} medics): "
-            f"Prioritized Zone B & Zone D for medical triage while allocating vehicles to Zone C alternate bypass route."
+            f"Prioritized high severity sectors for medical triage while allocating vehicles for evacuation bypass routes."
         )
 
         negotiation = AgentNegotiation(
+            intelligence_request=intel_rec_summary,
             medical_request=medical_rec_summary,
             logistics_request=logistics_rec_summary,
             comm_request=comm_rec_summary,
             coordinator_resolution=conflict_res_text
         )
 
-        # 7. Generate Public Alert Draft
-        public_alert = self.comm_agent.generate_public_alert(zones)
+        # 7. Generate Public Alert Draft using current location and disaster
+        public_alert = self.comm_agent.generate_public_alert(zones, location=location, disaster_type=disaster_type)
 
         # 8. Trade-offs and Rationale
         tradeoffs = {
-            "medical_vs_logistics": "Medical Agent requested additional medics for Zone B & D; Coordinator balanced vehicle fleet to maintain evacuation capability while prioritizing medical triage.",
-            "road_accessibility_routing": "Zone C Road 3 is Blocked; Logistics Agent rerouted transport fleet via Road 4 (North Ridge Bypass).",
+            "hazard_severity_vs_population": "Allocations prioritized sectors with elevated rainfall and flood level over pure population numbers.",
+            "medical_vs_logistics": "Medical Agent requested additional medics for critical trauma sectors; Coordinator balanced vehicle fleet to maintain evacuation capability.",
+            "road_accessibility_routing": "Blocked road corridors rerouted emergency transport via alternate bypass routes.",
             "fixed_resource_capping": f"Strictly enforced fixed limits of {resources.vehicles} vehicles and {resources.medics} medics without treating resources as infinite."
         }
 
         # Generate Explainable reasoning
-        explanation = self._generate_explanation(zones, final_allocations, conflicts, changes, recommendations)
+        explanation = self._generate_explanation(zones, final_allocations, conflicts, changes, recommendations, location)
 
         return CoordinatorPlan(
             timestamp=self.get_timestamp(),
@@ -131,10 +141,11 @@ class CoordinatorAgent(BaseAgent):
         allocations: List[ZoneAllocation],
         conflicts: List[ConflictItem],
         changes: List[PlanChange],
-        recommendations: Dict[str, AgentRecommendation]
+        recommendations: Dict[str, AgentRecommendation],
+        location: str
     ) -> str:
         prompt = f"""
-You are the Master Coordinator AI for RESQ-AI (HTH-GA-07 disaster response).
+You are the Master Coordinator AI for RESQ-AI emergency response in {location}.
 Zones state:
 {self.format_zones_summary(zones)}
 
@@ -147,8 +158,8 @@ Plan Changes from previous state:
 Final Allocations:
 {[f"{a.zone_name}: Medics={a.medics}, Vehicles={a.vehicles}, Shelters={a.shelter_units}, Supplies={a.supplies}" for a in allocations]}
 
-Provide a clear, authoritative, human-commander-explainable explanation answering:
-1. Why were resources allocated this way?
+Provide a clear, authoritative explanation answering:
+1. Why were resources allocated this way based on hazard severity, flood level, and medical urgency?
 2. How were agent conflicts resolved under fixed resource caps?
 3. What trade-offs were made regarding critical patients and road access?
 Keep it under 180 words, professional, and explainable.
@@ -160,16 +171,18 @@ Keep it under 180 words, professional, and explainable.
             return llm_data["explanation"]
 
         # High Quality Deterministic Reasoning Fallback
-        critical_zones = [z for z in zones if z.risk == "Critical" or z.critical >= 4]
-        high_crit_names = ", ".join([z.name for z in critical_zones]) or "all sectors"
+        critical_zones = [z for z in zones if z.risk_level in ["Critical", "Very High"] or z.critical >= 4]
+        top_zone = critical_zones[0] if critical_zones else (zones[0] if zones else None)
+        top_name = top_zone.name if top_zone else "Zone B"
 
         has_changes = len(changes) > 0
         change_note = f" Dynamic re-planning transferred resources toward new critical sectors ({len(changes)} reallocation adjustments)." if has_changes else ""
 
         explanation = (
-            f"Zone B received the highest medical allocation because it has the largest critical-patient population (10 Critical). "
-            f"Zone C received evacuation priority because its primary Road 3 is BLOCKED, requiring rerouting via Road 4. "
-            f"Where agent resource requests exceeded capacity ({len(conflicts)} resource conflicts resolved), "
-            f"the Coordinator enforced hard bounds by scaling allocations based on casualty triage formulas.{change_note}"
+            f"{top_name} received the highest allocation because it has elevated flood severity ({top_zone.flood_level_m if top_zone else 3.8}m flood level, {top_zone.severity_score if top_zone else 84}/100 score) "
+            f"and high medical urgency ({top_zone.critical if top_zone else 10} Critical patients). "
+            f"Allocations were driven by multi-factor hazard severity rather than population alone. "
+            f"Where agent resource requests exceeded capacity ({len(conflicts)} conflicts detected), "
+            f"the Coordinator enforced hard bounds strictly within limits.{change_note}"
         )
         return explanation

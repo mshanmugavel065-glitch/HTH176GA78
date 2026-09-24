@@ -12,6 +12,23 @@ export const analyzeSituation = async (location, situation) => {
   return res.data;
 };
 
+export const uploadDataset = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await axios.post(`${API_BASE_URL}/dataset/upload`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  });
+  return res.data;
+};
+
+export const simulateHazardUpdate = async (rainfallIncrease = 50.0, floodIncrease = 0.5) => {
+  const res = await axios.post(`${API_BASE_URL}/simulate-update`, {
+    rainfall_increase: rainfallIncrease,
+    flood_increase: floodIncrease
+  });
+  return res.data;
+};
+
 export const sendChatMessage = async (message) => {
   const res = await axios.post(`${API_BASE_URL}/chat`, { message });
   return res.data;

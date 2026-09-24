@@ -8,7 +8,7 @@ class LogisticsAgent(BaseAgent):
         super().__init__(
             agent_id="logistics_agent",
             agent_name="Logistics Agent",
-            priority_focus="Vehicle Allocation, Shelters & Evacuation Routing"
+            priority_focus="Rescue Fleet, Shelters & Evacuation Routing"
         )
 
     def analyze(self, zones: List[DisasterZone], resources: ResourcePool) -> AgentRecommendation:
@@ -18,13 +18,15 @@ class LogisticsAgent(BaseAgent):
 You are the Logistics Agent in RESQ-AI disaster management.
 Available Fleet & Shelters: {self.format_resources_summary(resources)}
 
-Road Network Status:
+Road Network Status & Zone Telemetry:
 {road_summary}
 
 Disaster Zones:
 {self.format_zones_summary(zones)}
 
-Evaluate transport routing, shelter limits, and road access. Note blocked roads (e.g. Zone C Road 3 blocked).
+Evaluate transport routing, shelter capacity, hazard severity, and road access blockages.
+Do NOT allocate resources using population alone. Priority must go to high flood severity, blocked road corridors, and evacuation zones.
+
 Output JSON with:
 {{
   "insights": ["Logistics insight 1", "Evacuation route insight 2"],
@@ -58,26 +60,32 @@ Output JSON with:
                     medics=rec.get("medics", 0),
                     shelter_units=rec.get("shelter_units", 0),
                     supplies=rec.get("supplies", 0),
-                    priority=rec.get("priority", "Medium"),
+                    priority=rec.get("priority", "Moderate"),
                     reason=rec.get("reason", "Logistics & routing allocation")
                 ))
         else:
             # Deterministic Fallback Road & Logistics Logic
             blocked_zones = [z for z in zones if z.road_status == "Blocked"]
             congested_zones = [z for z in zones if z.road_status == "Congested"]
-            
+
             insights = [
-                f"Road Network Analysis: Identified {len(blocked_zones)} blocked evacuation corridors.",
-                f"Zone C Road 3 is BLOCKED: Routing emergency fleet via alternate {zones[2].alternate_route if len(zones)>2 else 'Bypass'}.",
-                f"Fleet vehicle constraint: {resources.vehicles} vehicles available for dispatch across {len(zones)} active sectors."
+                f"Road Network Analysis: Identified {len(blocked_zones)} blocked and {len(congested_zones)} congested evacuation corridors.",
+                f"Zone C Road 3 is BLOCKED: Emergency fleet rerouted via alternate Road 4 (North Ridge Bypass).",
+                f"Logistics Priority: Rescue vehicles dispatched to sectors with severe flood levels & evacuation orders (population alone is ignored)."
             ]
 
-            total_pop = sum(z.population for z in zones) or 1
             for z in zones:
-                veh = 2 if z.evacuation_required else (1 if z.critical > 5 else 0)
-                shelter = 1 if z.evacuation_required else 0
-                supplies = int((z.population / total_pop) * resources.supplies)
+                if z.severity_score >= 80 or z.flood_level_m >= 3.5 or z.evacuation_required:
+                    veh = 2
+                    shelter = 1
+                elif z.severity_score >= 50 or z.flood_level_m >= 2.0:
+                    veh = 1
+                    shelter = 1 if z.evacuation_required else 0
+                else:
+                    veh = 1 if z.critical > 0 else 0
+                    shelter = 0
 
+                supplies = 30 if z.severity_score >= 70 else (20 if z.severity_score >= 40 else 10)
                 route_note = f"Evac required. Road '{z.road_name}' is {z.road_status}. Alternate: '{z.alternate_route}'." if z.road_status != "Open" else f"Road '{z.road_name}' open."
 
                 recommendations.append(ZoneAllocation(
@@ -87,8 +95,9 @@ Output JSON with:
                     medics=1 if z.critical > 0 else 0,
                     shelter_units=shelter,
                     supplies=supplies,
-                    priority=z.risk,
-                    reason=f"Logistics allocation: {route_note}"
+                    priority=z.risk_level,
+                    severity_score=z.severity_score,
+                    reason=f"Logistics: {route_note} Flood level {z.flood_level_m}m, Severity {z.severity_score}/100."
                 ))
 
         return AgentRecommendation(

@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
 import HeroLanding from './components/HeroLanding';
 import ChatInterface from './components/ChatInterface';
+import DisasterIntelligencePanel from './components/DisasterIntelligencePanel';
 import SimulatedRegionMap from './components/SimulatedRegionMap';
 import AgentNetwork from './components/AgentNetwork';
 import ResourcePanel from './components/ResourcePanel';
 import ZoneCard from './components/ZoneCard';
 import AgentActivity from './components/AgentActivity';
 import ResponsePlan from './components/ResponsePlan';
+import BeforeAfterComparison from './components/BeforeAfterComparison';
 import ConflictPanel from './components/ConflictPanel';
 import PublicAlertPanel from './components/PublicAlertPanel';
 import DecisionExplanation from './components/DecisionExplanation';
@@ -21,7 +23,8 @@ import {
   triggerReplan,
   addPresetZoneD,
   deleteZone,
-  resetSystem
+  resetSystem,
+  simulateHazardUpdate
 } from './services/api';
 
 export default function App() {
@@ -75,7 +78,7 @@ export default function App() {
 
   const handleRunPlan = async () => {
     setIsProcessing(true);
-    setStatusMessage('Medical, Logistics, and Communications agents negotiating plan...');
+    setStatusMessage('Executing Disaster Intelligence, Medical, Logistics, and Communications agents...');
     try {
       const newState = await triggerPlan();
       setSystemState(newState);
@@ -88,7 +91,7 @@ export default function App() {
 
   const handleAddZoneD = async () => {
     setIsProcessing(true);
-    setStatusMessage('⚠️ Adding Zone D (Hospital Landslide Hazard)...');
+    setStatusMessage('⚠️ Adding Zone D (Hospital Landslide & Flood Hazard)...');
     try {
       const newState = await addPresetZoneD();
       setSystemState(newState);
@@ -100,9 +103,23 @@ export default function App() {
     }
   };
 
+  const handleSimulateHazardUpdate = async () => {
+    setIsProcessing(true);
+    setStatusMessage('🌧️ Surge telemetry update: +50mm rainfall...');
+    try {
+      const newState = await simulateHazardUpdate(50.0, 0.5);
+      setSystemState(newState);
+      setStatusMessage('Hazard telemetry updated. Ready for Re-Planning.');
+    } catch (err) {
+      console.error('Error simulating hazard update:', err);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleReplan = async () => {
     setIsProcessing(true);
-    setStatusMessage('Re-running agents and enforcing fixed resource bounds...');
+    setStatusMessage('Re-running 5-agent pipeline and enforcing fixed resource bounds...');
     try {
       const newState = await triggerReplan();
       setSystemState(newState);
@@ -137,21 +154,20 @@ export default function App() {
     }
   };
 
-  // Guided One-Click Presentation Workflow
+  // Guided One-Click Response Simulation Workflow
   const handleStartAutoDemo = async () => {
     if (!systemState?.location) {
-      // Set default scenario if location not set
-      await handleAnalyzeSituation('Chennai, Tamil Nadu', 'Heavy flooding affecting multiple regions with limited rescue resources.');
+      await handleAnalyzeSituation('Coimbatore, Tamil Nadu', 'Heavy rainfall causing flooding across multiple residential and industrial sectors.');
     }
     setDemoStep(1);
     setIsProcessing(true);
-    setStatusMessage('SIMULATION STEP 1: Running initial flood response simulation...');
+    setStatusMessage('SIMULATION STEP 1: Running Disaster Intelligence & initial flood response planning...');
     const planState = await triggerPlan();
     setSystemState(planState);
     await new Promise(r => setTimeout(r, 1200));
 
     setDemoStep(2);
-    setStatusMessage('SIMULATION STEP 2: Running Medical, Logistics, and Communications agents...');
+    setStatusMessage('SIMULATION STEP 2: Disaster Intelligence & Medical Triage evaluating critical trauma density...');
     await new Promise(r => setTimeout(r, 1200));
 
     setDemoStep(3);
@@ -161,7 +177,7 @@ export default function App() {
     await new Promise(r => setTimeout(r, 1400));
 
     setDemoStep(4);
-    setStatusMessage('SIMULATION STEP 4: Triggering Dynamic Re-planning & Conflict Resolution...');
+    setStatusMessage('SIMULATION STEP 4: Triggering Dynamic Re-planning & Hard Resource Constraint Solver...');
     const replanState = await triggerReplan();
     setSystemState(replanState);
     await new Promise(r => setTimeout(r, 1000));
@@ -194,7 +210,7 @@ export default function App() {
       {/* Main Content Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-8">
         
-        {/* HERO LANDING / CHAT INTERFACE */}
+        {/* HERO LANDING / INITIAL INPUT */}
         {!isAnalyzed ? (
           <HeroLanding
             onAnalyze={handleAnalyzeSituation}
@@ -210,9 +226,11 @@ export default function App() {
               onAddZoneD={handleAddZoneD}
               onReplan={handleReplan}
               onReset={handleReset}
+              onSimulateHazardUpdate={handleSimulateHazardUpdate}
               isProcessing={isProcessing}
               onStartAutoDemo={handleStartAutoDemo}
               demoStep={demoStep}
+              onUploadComplete={(newState) => setSystemState(newState)}
             />
 
             {/* COMMANDER CHATBOT INTERFACE */}
@@ -223,6 +241,9 @@ export default function App() {
               onActionClick={(act) => handleSendMessage(act)}
             />
 
+            {/* DISASTER INTELLIGENCE & SEVERITY ASSESSMENT DASHBOARD */}
+            <DisasterIntelligencePanel systemState={systemState} />
+
             {/* COMMAND-CENTER DASHBOARD SECTION */}
             <div className="pt-6 border-t border-slate-800 space-y-8">
               
@@ -232,7 +253,7 @@ export default function App() {
                     Situation Command Center — {systemState?.location}
                   </h2>
                   <p className="text-xs text-slate-400">
-                    HTH-GA-07 Multi-Agent Orchestration & Resource Constraint Solver
+                    RESQ-AI Multi-Agent Response Coordination & Resource Constraint Solver
                   </p>
                 </div>
                 <span className="text-xs text-slate-400 font-mono bg-slate-800 px-3 py-1 rounded border border-slate-700">
@@ -263,7 +284,7 @@ export default function App() {
                     <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
                     Active Disaster Sectors ({systemState?.zones?.length || 0})
                   </h3>
-                  <span className="text-xs text-slate-400 font-mono">Synthetic Telemetry</span>
+                  <span className="text-xs text-slate-400 font-mono">Telemetry Telemetry</span>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -291,6 +312,13 @@ export default function App() {
                 </div>
               </div>
 
+              {/* BEFORE vs AFTER Dynamic Re-planning Differential */}
+              <BeforeAfterComparison
+                previousPlan={systemState?.previous_plan}
+                currentPlan={systemState?.current_plan}
+                differences={systemState?.plan_differences}
+              />
+
               {/* Draft Public Evacuation Alert */}
               <PublicAlertPanel alert={systemState?.current_plan?.public_alert} />
 
@@ -309,7 +337,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="border-t border-slate-800 bg-slate-950 py-4 px-6 text-center text-xs text-slate-500 font-mono">
-        RESQ-AI — Multi-Agent Disaster Response Coordinator • Problem HTH-GA-07
+        RESQ-AI — Rapid Emergency Support & Coordination — AI • Multi-Agent Response Platform
       </footer>
 
     </div>

@@ -1,10 +1,12 @@
 import React from 'react';
-import { ShieldAlert, RefreshCw, Radio, MapPin, Database } from 'lucide-react';
+import { ShieldAlert, RefreshCw, Radio, MapPin, Database, Sparkles } from 'lucide-react';
 
 export default function Header({ systemState, onReset, isProcessing }) {
   const location = systemState?.location ? systemState.location : 'Location not set';
   const isAnalyzed = Boolean(systemState?.is_analyzed && systemState?.location);
-  const activeAgents = systemState?.active_agents_count || 4;
+  const activeAgents = systemState?.active_agents_count || 5;
+  const dataSourceMode = systemState?.data_source_mode || 'SIMULATED DISASTER SCENARIO';
+  const isUploadedDataset = dataSourceMode === 'UPLOADED DATASET';
 
   return (
     <header className="bg-slate-900/95 border-b border-slate-800 backdrop-blur-md sticky top-0 z-40 px-4 sm:px-6 py-3 shadow-xl font-sans">
@@ -25,11 +27,11 @@ export default function Header({ systemState, onReset, isProcessing }) {
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-bold text-white tracking-wider font-mono">RESQ-AI</h1>
               <span className="px-2 py-0.5 text-[10px] uppercase font-mono font-semibold tracking-wider rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
-                Multi-Agent Coordinator
+                Disaster Intelligence Platform
               </span>
             </div>
             <p className="text-xs text-slate-400 font-medium">
-              Multi-Agent Disaster Response Coordinator
+              Rapid Emergency Support & Coordination — AI
             </p>
           </div>
         </div>
@@ -52,14 +54,14 @@ export default function Header({ systemState, onReset, isProcessing }) {
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/90 border border-slate-700/80 text-xs">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
             <span className="text-slate-400 font-mono">Status:</span>
-            <span className="text-emerald-400 font-semibold font-mono">● Coordination Active</span>
+            <span className="text-emerald-400 font-semibold font-mono">● Intelligence & Coordination Active</span>
           </div>
 
           {/* Agents Badge */}
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/90 border border-slate-700/80 text-xs">
             <Radio className="w-3.5 h-3.5 text-purple-400" />
             <span className="text-slate-400 font-mono">Agents:</span>
-            <span className="text-purple-300 font-bold font-mono">{activeAgents} Active</span>
+            <span className="text-purple-300 font-bold font-mono">{activeAgents} Specialized AI Agents</span>
           </div>
 
           {/* Reset Button */}
@@ -81,10 +83,19 @@ export default function Header({ systemState, onReset, isProcessing }) {
       <div className="max-w-7xl mx-auto mt-2 pt-2 border-t border-slate-800/60 flex items-center justify-between text-[11px] text-slate-400 font-mono">
         <div className="flex items-center gap-2">
           <Database className="w-3.5 h-3.5 text-cyan-400" />
-          <span>Live Data: <span className="text-amber-400">Unavailable</span> • <strong className="text-cyan-300 uppercase">SIMULATED DISASTER SCENARIO</strong></span>
+          <span>Data Telemetry: </span>
+          {isUploadedDataset ? (
+            <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold flex items-center gap-1">
+              <Sparkles className="w-3 h-3 text-emerald-400" /> UPLOADED DATASET ({systemState?.dataset_metadata?.filename || 'CSV/JSON'})
+            </span>
+          ) : (
+            <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold">
+              SIMULATED DISASTER SCENARIO
+            </span>
+          )}
         </div>
-        <span className="hidden sm:inline text-slate-500">
-          Deterministic Hard Constraints Enforced
+        <span className="hidden sm:inline text-slate-400">
+          Deterministic Hard Constraint Validator Active
         </span>
       </div>
     </header>

@@ -1,5 +1,5 @@
 import json
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
@@ -11,7 +11,7 @@ from services.scenario_manager import scenario_manager
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="RESQ-AI: Generative Multi-Agent Disaster Response Coordinator API"
+    description="RESQ-AI: Rapid Emergency Support & Coordination — AI API"
 )
 
 # Allow CORS
@@ -30,12 +30,16 @@ class AnalyzeRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
 
+class SimulateUpdateRequest(BaseModel):
+    rainfall_increase: float = 50.0
+    flood_increase: float = 0.5
+
 @app.get("/")
 def root():
     return {
         "status": "active",
-        "system": settings.PROJECT_NAME,
-        "tagline": "Generative Multi-Agent Disaster Response Coordinator",
+        "system": "RESQ-AI",
+        "tagline": "Rapid Emergency Support & Coordination — AI",
         "version": settings.VERSION,
         "llm_configured": bool(settings.GEMINI_API_KEY)
     }
@@ -50,6 +54,18 @@ def analyze_situation(req: AnalyzeRequest):
         return scenario_manager.analyze_location_and_situation(req.location, req.situation)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
+
+@app.post("/api/dataset/upload", response_model=SystemState)
+async def upload_dataset(file: UploadFile = File(...)):
+    try:
+        content = await file.read()
+        return scenario_manager.upload_dataset(content, file.filename or "disaster_data.csv")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Dataset parsing error: {str(e)}")
+
+@app.post("/api/simulate-update", response_model=SystemState)
+def simulate_hazard_update(req: SimulateUpdateRequest):
+    return scenario_manager.simulate_hazard_update(req.rainfall_increase, req.flood_increase)
 
 @app.post("/api/chat", response_model=SystemState)
 def chat_with_agent(req: ChatRequest):

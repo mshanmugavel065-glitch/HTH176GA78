@@ -8,7 +8,7 @@ class MedicalAgent(BaseAgent):
         super().__init__(
             agent_id="medical_agent",
             agent_name="Medical Agent",
-            priority_focus="Triage & Medic Allocation"
+            priority_focus="Triage & Trauma Medic Allocation"
         )
 
     def analyze(self, zones: List[DisasterZone], resources: ResourcePool) -> AgentRecommendation:
@@ -16,10 +16,12 @@ class MedicalAgent(BaseAgent):
 You are the Medical Agent in RESQ-AI emergency response system.
 Available Resources: {self.format_resources_summary(resources)}
 
-Disaster Zones:
+Disaster Zones Telemetry & Hazard Analysis:
 {self.format_zones_summary(zones)}
 
-Analyze injury severity, critical patient ratio, and medical urgency.
+Analyze injury severity, critical trauma cases, hazard severity scores, and medical urgency.
+Do NOT use population alone to allocate medical staff. Prioritize zones with high critical patients and high hazard severity.
+
 Output JSON with:
 {{
   "insights": ["insight 1", "insight 2"],
@@ -28,16 +30,16 @@ Output JSON with:
       "zone_id": "zone-b",
       "zone_name": "Zone B",
       "vehicles": 1,
-      "medics": 6,
+      "medics": 5,
       "shelter_units": 0,
       "supplies": 35,
       "priority": "Critical",
-      "reason": "Medical triage rationale"
+      "reason": "Medical triage rationale based on 10 critical patients and 84/100 severity score."
     }}
   ]
 }}
 """
-        system_instruction = "You are a chief medical officer and triage AI expert. Prioritize saving lives, emergency treatment, and field medic allocation. Respond in strict JSON."
+        system_instruction = "You are a chief medical officer and triage AI expert. Prioritize saving lives, emergency trauma treatment, and field medic allocation based on medical urgency and hazard severity."
         llm_data = llm_service.generate_json(prompt, system_instruction)
 
         recommendations = []
@@ -53,45 +55,47 @@ Output JSON with:
                     medics=rec.get("medics", 0),
                     shelter_units=rec.get("shelter_units", 0),
                     supplies=rec.get("supplies", 0),
-                    priority=rec.get("priority", "Medium"),
+                    priority=rec.get("priority", "Moderate"),
                     reason=rec.get("reason", "Medical triage allocation")
                 ))
         else:
-            # Deterministic Fallback Triage Logic
+            # Deterministic Fallback Triage Logic based on trauma & hazard severity
             total_critical = sum(z.critical for z in zones) or 1
-            total_injured = sum(z.injured for z in zones)
-            
+            total_injured = sum(z.injured for z in zones) or 1
+
             insights = [
-                f"Triage Analysis: Identified {total_critical} critical casualties and {total_injured} total injured across active zones.",
-                "Zone B / Critical sectors require urgent intensive medical deployment due to high trauma density.",
-                f"Medical personnel constraint: {resources.medics} total medics must be prioritized strictly by trauma severity."
+                f"Medical Triage Analysis: Identified {sum(z.critical for z in zones)} critical casualties and {sum(z.injured for z in zones)} injured across active sectors.",
+                f"Primary Medical Focus: Sectors with elevated hazard severity and critical patient concentration assigned priority medic teams.",
+                f"Resource Bounds: {resources.medics} total medics allocated strictly by medical urgency and hazard severity (population alone is ignored)."
             ]
 
-
-
-            # Calculate medic allocation by critical weight
             for z in zones:
-                # Heavy weighting on critical patients
-                if z.critical >= 8:
+                # Allocation based on critical patients and severity score
+                if z.critical >= 8 or z.severity_score >= 80:
                     medics_demanded = 5
-                elif z.critical >= 4:
+                    priority_lvl = "Critical"
+                elif z.critical >= 4 or z.severity_score >= 60:
                     medics_demanded = 3
-                elif z.critical >= 1:
+                    priority_lvl = "Very High"
+                elif z.critical >= 1 or z.severity_score >= 40:
                     medics_demanded = 2
+                    priority_lvl = "High"
                 else:
                     medics_demanded = 1 if z.injured > 0 else 0
+                    priority_lvl = "Moderate"
 
                 vehicles_demanded = 2 if z.critical >= 6 else (1 if z.injured > 10 else 0)
-                
+
                 recommendations.append(ZoneAllocation(
                     zone_id=z.id,
                     zone_name=z.name,
                     vehicles=vehicles_demanded,
                     medics=medics_demanded,
-                    shelter_units=0, # Medical agent focuses on medics & med supplies
-                    supplies=int((z.injured / (total_injured or 1)) * 60) + 10,
-                    priority=z.risk,
-                    reason=f"Triage priority: {z.critical} critical patients, {z.injured} injured. Requires {medics_demanded} medics."
+                    shelter_units=0,
+                    supplies=int((z.injured / total_injured) * 60) + 10,
+                    priority=priority_lvl,
+                    severity_score=z.severity_score,
+                    reason=f"Medical triage: {z.critical} critical patients, {z.injured} injured, severity score {z.severity_score}/100."
                 ))
 
         return AgentRecommendation(
