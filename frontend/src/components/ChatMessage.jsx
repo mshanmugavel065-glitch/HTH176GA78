@@ -14,7 +14,7 @@ export default function ChatMessage({ message, onActionClick }) {
       return (
         <div key={idx} className={line.trim() === '' ? 'h-2' : 'my-0.5'}>
           {parts.map((part, pIdx) => {
-            if (part.startswith && part.startswith('**') && part.endsWith('**')) {
+            if (part.startsWith && part.startsWith('**') && part.endsWith('**')) {
               return <strong key={pIdx} className="text-white font-semibold">{part.slice(2, -2)}</strong>;
             } else if (part.startsWith('**') && part.endsWith('**')) {
               return <strong key={pIdx} className="text-white font-semibold">{part.slice(2, -2)}</strong>;
