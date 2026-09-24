@@ -1,0 +1,62 @@
+{
+  "resources": {
+    "vehicles": 5,
+    "medics": 10,
+    "shelters": 3,
+    "supplies": 100
+  },
+  "initial_zones": [
+    {
+      "id": "zone-a",
+      "name": "Zone A",
+      "population": 80,
+      "injured": 12,
+      "critical": 4,
+      "risk": "High",
+      "evacuation_required": false,
+      "road_name": "Road 1 -> Hospital",
+      "road_status": "Open",
+      "alternate_route": "Direct Highway 1",
+      "description": "Residential sector with minor grid disruption and partial standing water."
+    },
+    {
+      "id": "zone-b",
+      "name": "Zone B",
+      "population": 40,
+      "injured": 25,
+      "critical": 10,
+      "risk": "Critical",
+      "evacuation_required": true,
+      "road_name": "Road 2 -> Shelter",
+      "road_status": "Congested",
+      "alternate_route": "River Bypass Road",
+      "description": "Industrial riverbank sector. Severe chemical spill & trauma casualty concentration."
+    },
+    {
+      "id": "zone-c",
+      "name": "Zone C",
+      "population": 100,
+      "injured": 8,
+      "critical": 2,
+      "risk": "High",
+      "evacuation_required": true,
+      "road_name": "Road 3 -> Shelter",
+      "road_status": "Blocked",
+      "alternate_route": "Road 4 (North Ridge Bypass)",
+      "description": "Low-lying coastal sector flooded. Primary Road 3 is BLOCKED by debris."
+    }
+  ],
+  "preset_zone_d": {
+    "id": "zone-d",
+    "name": "Zone D",
+    "population": 60,
+    "injured": 20,
+    "critical": 8,
+    "risk": "Critical",
+    "evacuation_required": true,
+    "road_name": "Road 5 -> Hospital Precinct",
+    "road_status": "Blocked",
+    "alternate_route": "South Ridge Relief Track",
+    "description": "Newly detected emergency: Hospital precinct hit by secondary landslide."
+  }
+}
