@@ -19,6 +19,7 @@ import {
   fetchSystemState,
   analyzeSituation,
   sendChatMessage,
+  clearChat,
   triggerPlan,
   triggerReplan,
   addPresetZoneD,
@@ -73,6 +74,15 @@ export default function App() {
       console.error('Error sending chat message:', err);
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleClearChat = async () => {
+    try {
+      const newState = await clearChat();
+      setSystemState(newState);
+    } catch (err) {
+      console.error('Error clearing chat:', err);
     }
   };
 
@@ -237,6 +247,7 @@ export default function App() {
             <ChatInterface
               chatHistory={systemState?.chat_history}
               onSendMessage={handleSendMessage}
+              onClearChat={handleClearChat}
               isProcessing={isProcessing}
               onActionClick={(act) => handleSendMessage(act)}
             />

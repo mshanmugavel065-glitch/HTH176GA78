@@ -34,6 +34,11 @@ export const sendChatMessage = async (message) => {
   return res.data;
 };
 
+export const clearChat = async () => {
+  const res = await axios.post(`${API_BASE_URL}/chat/clear`);
+  return res.data;
+};
+
 export const triggerPlan = async () => {
   const res = await axios.post(`${API_BASE_URL}/plan`);
   return res.data;

@@ -71,6 +71,10 @@ def simulate_hazard_update(req: SimulateUpdateRequest):
 def chat_with_agent(req: ChatRequest):
     return scenario_manager.process_chat_message(req.message)
 
+@app.post("/api/chat/clear", response_model=SystemState)
+def clear_chat_history():
+    return scenario_manager.clear_chat()
+
 @app.post("/api/plan", response_model=SystemState)
 def trigger_plan():
     return scenario_manager.run_full_pipeline(is_replan=False)

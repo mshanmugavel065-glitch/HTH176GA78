@@ -566,6 +566,20 @@ class ScenarioManager:
 
         return self.get_state()
 
+    def clear_chat(self) -> SystemState:
+        """Clears visible chat history while keeping location, dataset, risk assessment, agents, resources, and response plan completely intact."""
+        clear_msg = ChatMessage(
+            id=str(uuid.uuid4())[:8],
+            sender="assistant",
+            content="Chat cleared. RESQ-AI is ready for your next command.",
+            timestamp=datetime.now().strftime("%H:%M:%S"),
+            agent_name="Coordinator Agent",
+            suggested_actions=["CREATE RESPONSE PLAN", "WHICH ZONE IS HIGHEST RISK?", "GENERATE PUBLIC ALERT"]
+        )
+        self.chat_history = [clear_msg]
+        self._add_activity("system", "Chat History Cleared", "Visible chat messages cleared; scenario state remains unchanged.", "info")
+        return self.get_state()
+
     def reset_system(self) -> SystemState:
         self.load_initial_data()
         return self.get_state()
