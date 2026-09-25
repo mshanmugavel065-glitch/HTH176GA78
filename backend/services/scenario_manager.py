@@ -273,7 +273,6 @@ class ScenarioManager:
             agent_name="Coordinator Agent",
             suggested_actions=["CREATE RESPONSE PLAN", "GENERATE PUBLIC ALERT", "SHOW RESOURCE CONFLICTS", "+ ADD NEW DISASTER ZONE"]
         )
-        self.initial_welcome_msg = welcome_msg
         self.chat_history = [welcome_msg]
 
         return self.get_state()
@@ -568,30 +567,17 @@ class ScenarioManager:
         return self.get_state()
 
     def clear_chat(self) -> SystemState:
-        """Restores the chatbot to its exact initial start state for the active scenario without changing scenario data."""
-        if hasattr(self, 'initial_welcome_msg') and self.initial_welcome_msg:
-            self.chat_history = [self.initial_welcome_msg]
-        elif self.location:
-            top_zone = self.intelligence_result.priority_zone_name if self.intelligence_result else "Zone B"
-            top_score = self.intelligence_result.overall_severity_score if self.intelligence_result else 84.0
-            initial_msg = ChatMessage(
-                id=str(uuid.uuid4())[:8],
-                sender="assistant",
-                content=f"Understood. **{self.location}** is set as the active disaster-response location for this scenario: *\"{self.situation_query or 'Flood affecting multiple sectors'}\"*\n\n"
-                        f"- **Disaster Intelligence**: Prototype Severity Score **{top_score}/100**. Priority Sector: **{top_zone}**.\n"
-                        f"- **Medical Triage**: Prioritizing sectors with high critical patients.\n"
-                        f"- **Road Network**: Zone C Road 3 is **BLOCKED**. Logistics Agent rerouted via Road 4.\n"
-                        f"- **Resource Caps**: Enforced under fixed bounds ({self.resources.vehicles} Vehicles, {self.resources.medics} Medics).\n\n"
-                        f"What would you like to inspect or execute next?",
-                timestamp=datetime.now().strftime("%H:%M:%S"),
-                agent_name="Coordinator Agent",
-                suggested_actions=["CREATE RESPONSE PLAN", "GENERATE PUBLIC ALERT", "SHOW RESOURCE CONFLICTS", "+ ADD NEW DISASTER ZONE"]
-            )
-            self.chat_history = [initial_msg]
-        else:
-            self.chat_history = []
-
-        self._add_activity("system", "Chat History Reset", "Chatbot restored to exact initial start state; scenario state remains unchanged.", "info")
+        """Clears visible chat history while keeping location, dataset, risk assessment, agents, resources, and response plan completely intact."""
+        clear_msg = ChatMessage(
+            id=str(uuid.uuid4())[:8],
+            sender="assistant",
+            content="Chat cleared. RESQ-AI is ready for your next command.",
+            timestamp=datetime.now().strftime("%H:%M:%S"),
+            agent_name="Coordinator Agent",
+            suggested_actions=["CREATE RESPONSE PLAN", "WHICH ZONE IS HIGHEST RISK?", "GENERATE PUBLIC ALERT"]
+        )
+        self.chat_history = [clear_msg]
+        self._add_activity("system", "Chat History Cleared", "Visible chat messages cleared; scenario state remains unchanged.", "info")
         return self.get_state()
 
     def reset_system(self) -> SystemState:
